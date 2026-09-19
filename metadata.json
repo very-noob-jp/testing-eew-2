@@ -1,0 +1,6 @@
+{
+  "name": "緊急地震速報 WebSocket訓練シミュレーター",
+  "description": "緊急地震速報・強震モニタ観測網の物理シミュレーションおよび外部ソフト連携用WebSocket送信システム",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
