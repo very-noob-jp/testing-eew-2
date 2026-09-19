@@ -138,16 +138,19 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
   const injectionPresets = {
     wolfx: JSON.stringify(
       {
-        type: 'wolfx_eew',
+        type: 'jma_eew',
         Title: '緊急地震速報（警報）',
-        CodeType: 'EEW',
+        CodeType: 'Ｍ、最大予測震度及び主要動到達予測時刻の緊急地震速報',
         Issue: {
           Source: '気象庁',
-          Time: new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/'),
+          Status: '通常',
+          Time: '2026/09/19 13:45:00',
           Type: '通常',
         },
-        EventID: '202609190001',
+        EventID: '20260919134500',
         Serial: 3,
+        AnnouncedTime: '2026/09/19 13:45:00',
+        OriginTime: '2026/09/19 13:44:45',
         Hypocenter: '石川県能登地方',
         Latitude: 37.5,
         Longitude: 137.2,
@@ -156,21 +159,31 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
         Magnitude: 7.6,
         MaxIntensity: '7',
         MaxIntensity_Float: 6.8,
-        Accuracy: { Epicenter: '1', Depth: '1', Magnitude: '1' },
+        Accuracy: {
+          Epicenter: 'IPF法（5点以上）',
+          Depth: 'IPF法（5点以上）',
+          Magnitude: 'P相／全相混在',
+        },
         isWarn: true,
         isFinal: false,
         isCancel: false,
         isAssumption: false,
         WarnArea: [
           {
+            Chiiki: '石川県能登',
+            Shindo1: '7',
+            Shindo2: '4',
+            Time: '2026/09/19 13:45:15',
+            Type: '警報',
+            Arrive: false,
             Pref: '石川県',
             Name: '石川県能登',
-            ScaleFrom: '5弱',
+            ScaleFrom: '4',
             ScaleTo: '7',
             ArrivalTime: '2026/09/19 13:45:15',
           },
         ],
-        OriginalText: '緊急地震速報（警報）第3報: 能登半島で強い揺れ。最大震度7',
+        OriginalText: '37 03 00 260919134500 C11 260919134445 ND20260919134500 NCN003 JD////////////// JN/// 999 N375 E1372 010 76 07 RK44519 RT10/// RC0//// 9999=',
         status: 0,
       },
       null,
@@ -260,6 +273,7 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
   const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   
   const wolfxWsUrl = `${protocol}//${host}/ws/wolfx`;
+  const jmaEewWsUrl = `${protocol}//${host}/ws/jma_eew`;
   const p2pWsUrl = `${protocol}//${host}/ws/p2p`;
   const eewWsUrl = `${protocol}//${host}/ws/eew`;
   const dmdssWsUrl = `${protocol}//${host}/ws/dmdss`;
@@ -286,7 +300,7 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
 
   const filteredLogs = logs.filter((l) => {
     if (filterType === 'all') return true;
-    if (filterType === 'wolfx_eew') return l.type === 'wolfx_eew' || l.payload?.type === 'wolfx_eew';
+    if (filterType === 'wolfx_eew') return l.type === 'wolfx_eew' || l.type === 'jma_eew' || l.payload?.type === 'wolfx_eew' || l.payload?.type === 'jma_eew';
     if (filterType === 'p2p_eew') return l.type === 'p2p_eew' || l.payload?.code === 556;
     if (filterType === 'p2p_shindo') return l.type === 'p2p_shindo' || l.payload?.code === 551;
     return l.type === filterType;
@@ -294,23 +308,24 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
 
   // 言語別クライアント接続サンプルコード (Wolfx / P2P Quake 形式特化)
   const codeSnippets = {
-    wolfx_python: `# Python (Wolfx EEW 形式 WebSocket 受信クライアント)
+    wolfx_python: `# Python (Wolfx EEW / jma_eew 形式 WebSocket 受信クライアント)
 # pip install websockets
 import asyncio
 import json
 import websockets
 
+# Wolfx公式形式エンドポイント (/ws/jma_eew または /ws/wolfx)
 WOLFX_WS_URL = "${wolfxWsUrl}"
 
 async def receive_wolfx_eew():
     print(f"Wolfx EEW WebSocket に接続中: {WOLFX_WS_URL} ...")
     async with websockets.connect(WOLFX_WS_URL) as ws:
-        print("接続成功！ Wolfx形式の緊急地震速報を受信中...")
+        print("接続成功！ Wolfx (jma_eew) 形式の緊急地震速報を受信中...")
         async for message in ws:
             data = json.loads(message)
             
-            # Wolfx EEW 判定
-            if data.get("type") == "wolfx_eew" or data.get("CodeType") == "EEW":
+            # Wolfx EEW 判定 (type: "jma_eew" または CodeType)
+            if data.get("type") in ("jma_eew", "wolfx_eew") or "緊急地震速報" in str(data.get("CodeType", "")):
                 title = data.get("Title", "緊急地震速報")
                 serial = data.get("Serial", 1)
                 hypo = data.get("Hypocenter", "不明")
@@ -325,7 +340,7 @@ async def receive_wolfx_eew():
                     warn_tag = "【警報】" if is_warn else "【予報】"
                     print(f"{warn_tag} 第{serial}報: {hypo} M{mag} 最大震度{max_int}")
                     if is_warn:
-                        areas = [a.get("Name") for a in data.get("WarnArea", [])]
+                        areas = [a.get("Chiiki") or a.get("Name") for a in data.get("WarnArea", [])]
                         print(f"  ▶ 警報発令地域: {', '.join(areas)}")
 
 if __name__ == "__main__":
@@ -398,8 +413,8 @@ while (ws.State == WebSocketState.Open)
         else if (code == 551)
             Console.WriteLine($"[P2P Shindo 551] MaxScale: {root.GetProperty("earthquake").GetProperty("maxScale")}");
     }
-    // Wolfx EEW
-    else if (root.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "wolfx_eew")
+    // Wolfx EEW (type: "jma_eew")
+    else if (root.TryGetProperty("type", out var typeProp) && (typeProp.GetString() == "jma_eew" || typeProp.GetString() == "wolfx_eew"))
     {
         var title = root.GetProperty("Title").GetString();
         var hypo = root.GetProperty("Hypocenter").GetString();
@@ -412,10 +427,10 @@ while (ws.State == WebSocketState.Open)
 
 本訓練サーバーは以下のオープンプロトコル形式を同時に送出しています:
 
-1. 【Wolfx 緊急地震速報 (Project Wolfx 互換)】
-   - URL: ${wolfxWsUrl}
-   - 特徴: Title, Issue, Hypocenter, Magnitude, MaxIntensity, WarnArea 等の直感的なJSON
-   - 用途: Discord BOT, Twitter/X 自動投稿BOT, Webビューア
+1. 【Wolfx 緊急地震速報 (Project Wolfx / jma_eew 互換)】
+   - URL: ${jmaEewWsUrl} または ${wolfxWsUrl}
+   - 特徴: type: "jma_eew", Title, CodeType, Issue(Status), Hypocenter, Magnitude, WarnArea(Chiiki, Shindo1, Time, Type, Arrive)
+   - 用途: Zero Quake, Discord BOT, Twitter/X 自動投稿BOT, 外部地震モニター
 
 2. 【P2P地震情報 (P2PQuake v2 互換)】
    - URL: ${p2pWsUrl}
@@ -470,14 +485,14 @@ while (ws.State == WebSocketState.Open)
         
         {/* Wolfx Endpoint */}
         <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded border border-purple-800/80 font-mono text-purple-300 text-[11px]">
-          <span className="text-[10px] font-bold text-purple-400 bg-purple-950 px-1 rounded">Wolfx</span>
-          <span>{wolfxWsUrl}</span>
+          <span className="text-[10px] font-bold text-purple-400 bg-purple-950 px-1 rounded">Wolfx / jma_eew</span>
+          <span>{jmaEewWsUrl}</span>
           <button
-            onClick={() => copyToClipboard(wolfxWsUrl, 'wolfx')}
+            onClick={() => copyToClipboard(jmaEewWsUrl, 'jma_eew')}
             className="text-slate-400 hover:text-white transition-colors ml-1"
-            title="Wolfx URLをコピー"
+            title="Wolfx jma_eew URLをコピー"
           >
-            {copiedUrl === 'wolfx' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedUrl === 'jma_eew' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
         </div>
 
@@ -605,7 +620,13 @@ while (ws.State == WebSocketState.Open)
               ) : (
                 filteredLogs.slice(-50).reverse().map((log, idx) => {
                   const isExpanded = expandedLogIdx === idx;
-                  const isWolfx = log.type === 'wolfx_eew' || log.payload?.type === 'wolfx_eew' || log.payload?.CodeType === 'EEW';
+                  const isWolfx =
+                    log.type === 'wolfx_eew' ||
+                    log.type === 'jma_eew' ||
+                    log.payload?.type === 'wolfx_eew' ||
+                    log.payload?.type === 'jma_eew' ||
+                    log.payload?.CodeType === 'EEW' ||
+                    Boolean(log.payload?.CodeType?.includes('緊急地震速報'));
                   const isP2P556 = log.type === 'p2p_eew' || log.payload?.code === 556;
                   const isP2P551 = log.type === 'p2p_shindo' || log.payload?.code === 551;
                   const isEEW = log.type === 'eew';

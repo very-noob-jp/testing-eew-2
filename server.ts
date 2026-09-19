@@ -114,13 +114,21 @@ async function startServer() {
 
       const ch = channel.toLowerCase();
       const isWildcard = ch === 'all' || ch === '' || ch === '/';
+      const isWolfxMatch =
+        targetChannel === 'wolfx' &&
+        (ch === 'wolfx' || ch === 'jma_eew' || ch === 'all_eew');
+      const isP2pMatch =
+        targetChannel === 'p2p' &&
+        (ch === 'p2p' || ch === 'p2pquake');
 
       // チャンネルマッチング
       if (
         isWildcard ||
         targetChannel === 'all' ||
         ch === targetChannel.toLowerCase() ||
-        (targetChannel === 'eew' && (ch === 'wolfx' || ch === 'p2p' || ch === 'dmdss'))
+        isWolfxMatch ||
+        isP2pMatch ||
+        (targetChannel === 'eew' && (ch === 'wolfx' || ch === 'p2p' || ch === 'dmdss' || isWolfxMatch))
       ) {
         try {
           ws.send(message);
@@ -219,8 +227,20 @@ async function startServer() {
     let channel = 'all';
     try {
       const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-      const cleanPath = parsedUrl.pathname.replace(/^\/ws\/?/, '');
-      channel = cleanPath || 'all';
+      const cleanPath = parsedUrl.pathname.replace(/^\/ws\/?/, '').replace(/^\//, '').toLowerCase();
+      if (cleanPath === 'wolfx' || cleanPath === 'jma_eew' || cleanPath === 'all_eew') {
+        channel = 'wolfx';
+      } else if (cleanPath === 'p2p' || cleanPath === 'p2pquake') {
+        channel = 'p2p';
+      } else if (cleanPath === 'dmdss') {
+        channel = 'dmdss';
+      } else if (cleanPath === 'kyoshin') {
+        channel = 'kyoshin';
+      } else if (cleanPath === 'eew') {
+        channel = 'eew';
+      } else {
+        channel = cleanPath || 'all';
+      }
     } catch (e) {
       channel = 'all';
     }
@@ -240,31 +260,44 @@ async function startServer() {
       clients.delete(clientRecord);
     });
 
-    // 接続時に現在のステータスとウェルカム情報を送信
+    // 接続時の初回メッセージ送信
+    // ※WolfxやP2Pなどの専用クライアント (Zero Quake等) は非互換なsystem_welcomeを受信するとパースエラーになるため
+    //   専用チャンネルではシステムメッセージを送らず、進行中電文があればその形式の最新電文を直接送信
     try {
-      ws.send(
-        JSON.stringify({
-          type: 'system_welcome',
-          message: '緊急地震速報 WebSocket訓練テストサーバーへ接続しました',
-          serverTime: new Date().toISOString(),
-          endpoints: {
-            all: '/ws/all (全形式・全ストリームメッセージ)',
-            wolfx: '/ws/wolfx (Wolfx互換 緊急地震速報 JSON)',
-            p2p: '/ws/p2p (P2P地震情報 Code 556/551 JSON)',
-            eew: '/ws/eew (緊急地震速報メッセージ)',
-            dmdss: '/ws/dmdss (DM-DSS気象庁互換)',
-            kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム)',
-          },
-          currentStatus: {
-            isRunning,
-            isPaused,
-            elapsedSec,
-            scenarioName: currentScenario.name,
-          },
-          currentEEW,
-          currentShindoFlash,
-        })
-      );
+      if (channel === 'wolfx') {
+        if (currentEEW) {
+          ws.send(JSON.stringify(createWolfxFormat(currentEEW)));
+        }
+      } else if (channel === 'p2p') {
+        if (currentEEW) {
+          ws.send(JSON.stringify(createP2PEEWFormat(currentEEW)));
+        }
+      } else {
+        // all / eew / kyoshin / dmdss チャンネルには案内メッセージを送信
+        ws.send(
+          JSON.stringify({
+            type: 'system_welcome',
+            message: '緊急地震速報 WebSocket訓練テストサーバーへ接続しました',
+            serverTime: new Date().toISOString(),
+            endpoints: {
+              all: '/ws/all (全形式・全ストリームメッセージ)',
+              wolfx: '/ws/wolfx または /ws/jma_eew (Wolfx公式互換 jma_eew JSON)',
+              p2p: '/ws/p2p (P2P地震情報 Code 556/551 JSON)',
+              eew: '/ws/eew (緊急地震速報メッセージ)',
+              dmdss: '/ws/dmdss (DM-DSS気象庁互換)',
+              kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム)',
+            },
+            currentStatus: {
+              isRunning,
+              isPaused,
+              elapsedSec,
+              scenarioName: currentScenario.name,
+            },
+            currentEEW,
+            currentShindoFlash,
+          })
+        );
+      }
     } catch (e) {
       console.warn('[WS Initial Send Error]', e);
     }

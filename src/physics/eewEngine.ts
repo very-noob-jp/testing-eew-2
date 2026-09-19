@@ -318,7 +318,7 @@ export class EEWSimulationEngine {
     // 2. 最大予測震度が5弱以上 (maxPredictedRank >= 6) または M6.5以上
     // ⇒ 震度4以下の場合は「緊急地震速報（予報）」(isWarn = false)
     const isWarn = (maxPredictedRank >= 6 || estMag >= 6.5) && triggeredCount >= 2;
-    const eventId = `EEW_${this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+    const eventId = this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14);
 
     return {
       eventId,
@@ -342,7 +342,7 @@ export class EEWSimulationEngine {
 
   private generateCancelReport(elapsedSec: number): EEWReport {
     const now = new Date();
-    const eventId = `EEW_${this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+    const eventId = this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14);
     const reason = this.scenario.cancelConfig?.reason || '落雷等による観測点ノイズ誤検知';
 
     return {
