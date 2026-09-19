@@ -295,8 +295,7 @@ export default function App() {
   }, []);
 
   const handleStart = () => {
-    baseElapsedRef.current = 0;
-    elapsedSecRef.current = 0;
+    handleLocalReset();
     startTimeRef.current = performance.now();
     setIsRunning(true);
     setIsPaused(false);

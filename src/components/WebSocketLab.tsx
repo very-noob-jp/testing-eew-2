@@ -15,6 +15,10 @@ import {
   Layers,
   ChevronDown,
   ChevronUp,
+  Activity,
+  AlertTriangle,
+  AlertCircle,
+  Globe,
 } from 'lucide-react';
 
 interface WebSocketLabProps {
@@ -30,9 +34,105 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
   totalBroadcasts,
   onSendCustomBroadcast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'logs' | 'code' | 'inject'>('logs');
+  const [activeTab, setActiveTab] = useState<'logs' | 'code' | 'diagnostics' | 'inject'>('logs');
   const [selectedLanguage, setSelectedLanguage] = useState<'wolfx_python' | 'p2p_node' | 'csharp' | 'viewer'>('wolfx_python');
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{
+    status: 'idle' | 'testing' | 'success' | 'error';
+    latencyMs?: number;
+    closeCode?: number;
+    message?: string;
+    details?: string;
+  }>({ status: 'idle' });
+
+  // WebSocket接続テスト実行
+  const runConnectionTest = (targetUrl = allWsUrl) => {
+    setTestResult({ status: 'testing' });
+    const startTime = performance.now();
+    let socketOpened = false;
+
+    try {
+      const testWs = new WebSocket(targetUrl);
+      const timeoutTimer = setTimeout(() => {
+        if (!socketOpened) {
+          try {
+            testWs.close();
+          } catch (e) {}
+          setTestResult({
+            status: 'error',
+            message: '接続タイムアウト（5秒以内に応答がありませんでした）',
+            details: 'URLまたはポート番号、ファイアウォール設定を確認してください。',
+          });
+        }
+      }, 5000);
+
+      testWs.onopen = () => {
+        socketOpened = true;
+        clearTimeout(timeoutTimer);
+        const elapsed = Math.round(performance.now() - startTime);
+        setTestResult({
+          status: 'success',
+          latencyMs: elapsed,
+          message: `WebSocket接続成功！正常にハンドシェイクを完了しました（応答速度: ${elapsed}ms）`,
+          details: 'サーバーからメッセージを受信待機中...',
+        });
+
+        // 正常にメッセージを受信できたらクローズ
+        testWs.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            setTestResult((prev) => ({
+              ...prev,
+              status: 'success',
+              details: `電文受信確認: ${data.type || 'データ受信完了'} (${event.data.length} bytes)`,
+            }));
+          } catch (e) {}
+
+          setTimeout(() => {
+            try {
+              testWs.close(1000, 'Test completed normally');
+            } catch (e) {}
+          }, 600);
+        };
+      };
+
+      testWs.onerror = () => {
+        clearTimeout(timeoutTimer);
+        // onerror will be immediately followed by onclose with code 1006
+      };
+
+      testWs.onclose = (event) => {
+        clearTimeout(timeoutTimer);
+        if (event.code === 1000 || event.code === 1005) {
+          // 正常終了
+          return;
+        }
+
+        if (event.code === 1006) {
+          setTestResult({
+            status: 'error',
+            closeCode: 1006,
+            message: 'エラー: コード 1006 (異常切断 / Abnormal Closure)',
+            details:
+              'TCP接続またはSSL/TLSハンドシェイクが確立前に中断されました。下記「コード 1006 の原因と解決策」をご確認ください。',
+          });
+        } else {
+          setTestResult({
+            status: 'error',
+            closeCode: event.code,
+            message: `切断されました (Code: ${event.code})`,
+            details: event.reason || '通信が終了しました',
+          });
+        }
+      };
+    } catch (e: any) {
+      setTestResult({
+        status: 'error',
+        message: e.message || '接続エラー',
+        details: 'プロトコル (wss:// または ws://) を確認してください。',
+      });
+    }
+  };
   
   // 注入テンプレートプリセット
   const injectionPresets = {
@@ -435,6 +535,18 @@ while (ws.State == WebSocketState.Open)
         </button>
 
         <button
+          onClick={() => setActiveTab('diagnostics')}
+          className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 font-medium transition-colors ${
+            activeTab === 'diagnostics'
+              ? 'border-cyan-400 text-cyan-300 font-bold'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Wifi className="w-3.5 h-3.5" />
+          <span>接続診断 & ローカルIPガイド</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('inject')}
           className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 font-medium transition-colors ${
             activeTab === 'inject'
@@ -608,6 +720,158 @@ while (ws.State == WebSocketState.Open)
                 {copiedUrl === 'snippet' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 <span>コードをコピー</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'diagnostics' && (
+          <div className="space-y-4">
+            {/* Live Connection Test Card */}
+            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Wifi className="w-4 h-4 text-cyan-400" />
+                    <span>リアルタイム WebSocket 疎通テスト</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    ブラウザから直接WebSocketハンドシェイクを実行し、Ping応答時間や切断コードを診断します。
+                  </p>
+                </div>
+                <button
+                  onClick={() => runConnectionTest(allWsUrl)}
+                  disabled={testResult.status === 'testing'}
+                  className="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition-colors shrink-0"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>{testResult.status === 'testing' ? 'テスト実行中...' : '標準URLで接続テスト'}</span>
+                </button>
+              </div>
+
+              {testResult.status !== 'idle' && (
+                <div
+                  className={`p-3 rounded border text-xs font-mono flex items-start gap-2.5 ${
+                    testResult.status === 'testing'
+                      ? 'bg-blue-950/40 border-blue-800 text-blue-300'
+                      : testResult.status === 'success'
+                      ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+                      : 'bg-rose-950/40 border-rose-800 text-rose-300'
+                  }`}
+                >
+                  {testResult.status === 'testing' && <Activity className="w-4 h-4 animate-spin shrink-0 mt-0.5" />}
+                  {testResult.status === 'success' && <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />}
+                  {testResult.status === 'error' && <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />}
+                  <div className="space-y-1">
+                    <div className="font-bold">{testResult.message}</div>
+                    {testResult.details && <div className="text-[11px] opacity-90">{testResult.details}</div>}
+                    {testResult.latencyMs !== undefined && (
+                      <div className="text-[10px] text-emerald-400">
+                        Round-Trip Latency: {testResult.latencyMs}ms
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Code 1006 In-Depth Diagnostic Box */}
+            <div className="p-4 rounded-lg bg-rose-950/30 border border-rose-800/80 space-y-3 text-xs">
+              <div className="font-bold text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400" />
+                <span className="text-sm">コード 1006 (異常切断 / Abnormal Closure) の完全解説と解決策</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                <strong>コード 1006</strong> は、サーバー側から正常な切断電文が届く前に、<strong>TCP接続やSSL暗号化通信がOS/ブラウザ/プロキシによって強制中断された</strong>場合にクライアントが記録するエラーです。以下のいずれかが原因です：
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                <div className="p-3 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-amber-300 flex items-center gap-1">
+                    ① クラウドURLへのプロトコル・ポート誤り
+                  </span>
+                  <p className="text-slate-300 leading-relaxed">
+                    ・<strong className="text-white">NG:</strong> <code className="text-rose-300">ws://ais-...:3000</code> (ポート3000指定やws://は拒否されます)<br />
+                    ・<strong className="text-emerald-400">OK:</strong> <code className="text-cyan-300 font-bold">{allWsUrl}</code> (必ず <span className="underline">wss://</span> かつポート番号なし)
+                  </p>
+                </div>
+
+                <div className="p-3 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-amber-300 flex items-center gap-1">
+                    ② ブラウザの Mixed Content / PNA 制限
+                  </span>
+                  <p className="text-slate-300 leading-relaxed">
+                    HTTPSで開いているWebページからローカルIP（<code className="text-slate-400">ws://192.168.x.x</code>）へ接続しようとすると、Chromeのセキュリティ制約（Private Network Access）で自動遮断され <strong>1006</strong> になります。<br />
+                    👉 PythonやC#等の外部ネイティブソフトから接続してください。
+                  </p>
+                </div>
+
+                <div className="p-3 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-amber-300 flex items-center gap-1">
+                    ③ 自宅PCでサーバーが未起動
+                  </span>
+                  <p className="text-slate-300 leading-relaxed">
+                    ローカルIP（<code className="text-slate-400">ws://127.0.0.1:3000</code>）へ外部ソフトから接続する場合、PCのターミナルで <code className="text-cyan-300 font-bold">npm run dev</code> が起動している必要があります。（クラウド上で動いている本アプリとは別物です）
+                  </p>
+                </div>
+
+                <div className="p-3 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-amber-300 flex items-center gap-1">
+                    ④ パス指定とキープアライブ（対策済）
+                  </span>
+                  <p className="text-slate-300 leading-relaxed">
+                    パスなし（<code className="text-cyan-300">/</code>）や <code className="text-cyan-300">/ws/all</code>、<code className="text-cyan-300">/ws/wolfx</code> のすべてを柔軟に受領し、15秒ごとのPingハートビートでタイムアウト切断を防ぐようサーバーを強化しました。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Connection Refused & Local IP Guide */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              {/* Cloud vs Local Guide */}
+              <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+                <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>接続先URLの選び方</span>
+                </div>
+                <div className="text-slate-300 space-y-1.5 text-[11px] leading-relaxed">
+                  <p>
+                    <strong className="text-white">A. クラウド上の本シミュレータに外部ソフトから繋ぐ場合:</strong>
+                    <br />
+                    プロトコルは <code className="text-cyan-300 bg-slate-900 px-1 py-0.5 rounded">wss://</code> を指定し、ポート番号（:3000）は<strong>付けない</strong>でください。
+                    <br />
+                    例: <code className="text-cyan-300">{allWsUrl}</code>
+                  </p>
+                  <p>
+                    <strong className="text-white">B. ご自身のPC（ローカル環境）で実行して繋ぐ場合:</strong>
+                    <br />
+                    プロジェクトをダウンロードしてターミナルで <code className="text-cyan-300 bg-slate-900 px-1 py-0.5 rounded">npm run dev</code> を起動した状態にしてから、
+                    <code className="text-cyan-300 bg-slate-900 px-1 py-0.5 rounded">ws://127.0.0.1:3000/ws/all</code> または
+                    <code className="text-cyan-300 bg-slate-900 px-1 py-0.5 rounded">ws://192.168.x.x:3000/ws/all</code> に接続します。
+                  </p>
+                </div>
+              </div>
+
+              {/* Endpoints Summary */}
+              <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+                <div className="font-bold text-cyan-300 flex items-center gap-1.5">
+                  <Globe className="w-4 h-4" />
+                  <span>形式別 接続URL一覧</span>
+                </div>
+                <div className="space-y-1.5 text-[11px] font-mono">
+                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
+                    <div className="text-purple-400 font-bold">Wolfx EEW:</div>
+                    <div className="text-slate-300 truncate">{wolfxWsUrl}</div>
+                  </div>
+                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
+                    <div className="text-cyan-400 font-bold">P2P地震情報 (Code 556/551):</div>
+                    <div className="text-slate-300 truncate">{p2pWsUrl}</div>
+                  </div>
+                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
+                    <div className="text-slate-400 font-bold">全形式ストリーム:</div>
+                    <div className="text-slate-300 truncate">{allWsUrl}</div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

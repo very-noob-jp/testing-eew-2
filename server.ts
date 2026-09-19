@@ -25,11 +25,70 @@ async function startServer() {
 
   app.use(express.json());
 
-  // WebSocket Server 設定
-  const wss = new WebSocketServer({ server });
+  // CORS middleware for API
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // WebSocket Server 設定 (noServer: true で明示的なHTTPアップグレード制御)
+  const wss = new WebSocketServer({ noServer: true });
 
   // 接続クライアント管理 (チャンネル: all, eew, wolfx, p2p, kyoshin, dmdss)
   const clients = new Set<{ ws: WebSocket; channel: string }>();
+
+  // HTTP Upgrade リクエストの安全・柔軟なハンドリング
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      const parsedUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+      const pathname = parsedUrl.pathname;
+
+      // Vite HMR (開発環境のホットリロード通信) はViteに委譲
+      const isViteHmr =
+        request.headers['sec-websocket-protocol'] === 'vite-hmr' ||
+        pathname.includes('vite') ||
+        pathname.startsWith('/@');
+
+      if (isViteHmr && process.env.NODE_ENV !== 'production') {
+        return; // Vite middleware will handle it
+      }
+
+      // 地震データ送信用WebSocket (/ws/*, /, /eew, /wolfx, /p2p 等 すべてのパスを柔軟に受付)
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } catch (err) {
+      console.warn('[WS Upgrade Error]', err);
+      socket.destroy();
+    }
+  });
+
+  // 15秒ごとのPing/Pongハートビート (プロキシやNATルーターによる無通信切断・Code 1006 を防止)
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((client: any) => {
+      if (client.readyState === WebSocket.OPEN) {
+        if (client.isAlive === false) {
+          client.terminate();
+          return;
+        }
+        client.isAlive = false;
+        try {
+          client.ping();
+        } catch (e) {
+          // ignore
+        }
+      }
+    });
+  }, 15000);
+
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
 
   // シミュレーション状態管理
   let currentScenario: Scenario = PRESET_SCENARIOS[0]; // 2024 能登半島地震
@@ -53,14 +112,21 @@ async function startServer() {
     clients.forEach(({ ws, channel }) => {
       if (ws.readyState !== WebSocket.OPEN) return;
 
+      const ch = channel.toLowerCase();
+      const isWildcard = ch === 'all' || ch === '' || ch === '/';
+
       // チャンネルマッチング
       if (
-        channel === 'all' ||
+        isWildcard ||
         targetChannel === 'all' ||
-        channel === targetChannel ||
-        (targetChannel === 'eew' && (channel === 'wolfx' || channel === 'p2p' || channel === 'dmdss'))
+        ch === targetChannel.toLowerCase() ||
+        (targetChannel === 'eew' && (ch === 'wolfx' || ch === 'p2p' || ch === 'dmdss'))
       ) {
-        ws.send(message);
+        try {
+          ws.send(message);
+        } catch (e) {
+          console.warn('[WS Send Error]', e);
+        }
       }
     });
   }
@@ -150,36 +216,60 @@ async function startServer() {
 
   // WebSocket接続イベントハンドラ
   wss.on('connection', (ws, req) => {
-    const channel = req.url?.replace('/ws/', '') || 'all';
+    let channel = 'all';
+    try {
+      const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const cleanPath = parsedUrl.pathname.replace(/^\/ws\/?/, '');
+      channel = cleanPath || 'all';
+    } catch (e) {
+      channel = 'all';
+    }
+
     const clientRecord = { ws, channel };
     clients.add(clientRecord);
 
-    // 接続時に現在のステータスとウェルカム情報を送信
-    ws.send(
-      JSON.stringify({
-        type: 'system_welcome',
-        message: '緊急地震速報 WebSocket訓練テストサーバーへ接続しました',
-        serverTime: new Date().toISOString(),
-        endpoints: {
-          all: '/ws/all (全形式・全ストリームメッセージ)',
-          wolfx: '/ws/wolfx (Wolfx互換 緊急地震速報 JSON)',
-          p2p: '/ws/p2p (P2P地震情報 Code 556/551 JSON)',
-          eew: '/ws/eew (緊急地震速報メッセージ)',
-          dmdss: '/ws/dmdss (DM-DSS気象庁互換)',
-          kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム)',
-        },
-        currentStatus: {
-          isRunning,
-          isPaused,
-          elapsedSec,
-          scenarioName: currentScenario.name,
-        },
-        currentEEW,
-        currentShindoFlash,
-      })
-    );
+    // ハートビート生存フラグ初期化
+    (ws as any).isAlive = true;
+    ws.on('pong', () => {
+      (ws as any).isAlive = true;
+    });
 
-    ws.on('close', () => {
+    // エラーハンドラ (未処理例外によるプロセス強制終了および異常切断防止)
+    ws.on('error', (err) => {
+      console.warn(`[WS Client Error (${channel})]:`, err);
+      clients.delete(clientRecord);
+    });
+
+    // 接続時に現在のステータスとウェルカム情報を送信
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'system_welcome',
+          message: '緊急地震速報 WebSocket訓練テストサーバーへ接続しました',
+          serverTime: new Date().toISOString(),
+          endpoints: {
+            all: '/ws/all (全形式・全ストリームメッセージ)',
+            wolfx: '/ws/wolfx (Wolfx互換 緊急地震速報 JSON)',
+            p2p: '/ws/p2p (P2P地震情報 Code 556/551 JSON)',
+            eew: '/ws/eew (緊急地震速報メッセージ)',
+            dmdss: '/ws/dmdss (DM-DSS気象庁互換)',
+            kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム)',
+          },
+          currentStatus: {
+            isRunning,
+            isPaused,
+            elapsedSec,
+            scenarioName: currentScenario.name,
+          },
+          currentEEW,
+          currentShindoFlash,
+        })
+      );
+    } catch (e) {
+      console.warn('[WS Initial Send Error]', e);
+    }
+
+    ws.on('close', (code, reason) => {
       clients.delete(clientRecord);
     });
 
@@ -237,6 +327,14 @@ async function startServer() {
 
     switch (action) {
       case 'start':
+        if (!isRunning || elapsedSec >= 90 || elapsedSec === 0) {
+          elapsedSec = 0;
+          engine.reset(currentScenario);
+          currentEEW = null;
+          eewHistory.length = 0;
+          currentShindoFlash = null;
+          shindoHistory.length = 0;
+        }
         isRunning = true;
         isPaused = false;
         startLoop();
@@ -260,7 +358,7 @@ async function startServer() {
         elapsedSec = 0;
         if (timer) clearInterval(timer);
         timer = null;
-        engine.reset();
+        engine.reset(currentScenario);
         currentEEW = null;
         eewHistory.length = 0;
         currentShindoFlash = null;

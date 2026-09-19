@@ -206,24 +206,24 @@ export class EEWSimulationEngine {
 
     // 通常のEEW発報判定 (キャンセル発生後または最終報後は発報停止)
     if (!this.isCanceled && !this.finalReportIssued) {
-      // 第1報発報条件: 最初の検知から約0.8秒後
+      // 第1報発報条件: 最初の検知から約0.6秒後
       const shouldTriggerReport1 =
         this.reportsIssued === 0 &&
         this.firstTriggerSec !== null &&
-        elapsedSec - this.firstTriggerSec >= 0.8;
+        elapsedSec - this.firstTriggerSec >= 0.6;
 
-      // 続報発報条件: 前回発報から約2.2秒以上経過、かつ伝播中
+      // 続報発報条件: 前回発報から約2.2秒以上経過、かつ伝播中 (最大12報)
       const shouldTriggerUpdate =
         this.reportsIssued > 0 &&
-        this.reportsIssued < 10 &&
+        this.reportsIssued < 12 &&
         elapsedSec - this.lastReportTimeSec >= 2.2 &&
-        elapsedSec < 60;
+        elapsedSec < 50;
 
       // 最終報条件:
-      // 1. 報数が進み (4報以上)、観測点数または時間が進んで推定が安定
+      // 報数が十分進み（6報以上）、35秒以上経過または第10報到達時
       const isStableForFinal =
-        this.reportsIssued >= 4 &&
-        (this.reportsIssued >= 7 || triggeredCount >= 18 || elapsedSec >= 30);
+        this.reportsIssued >= 6 &&
+        (this.reportsIssued >= 10 || elapsedSec >= 35);
 
       const shouldTriggerFinal =
         this.reportsIssued > 0 &&

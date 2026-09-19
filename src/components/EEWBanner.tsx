@@ -293,27 +293,41 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
 
       {/* 逐次更新ログ */}
       <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
-        <div className="flex items-center gap-2">
-          <History className="w-3 h-3 text-cyan-400" />
-          <span>発報履歴:</span>
-          <div className="flex items-center gap-1 overflow-x-auto max-w-[400px]">
-            {eewHistory.map((h, i) => (
-              <span
-                key={`eew-history-${h.eventId || 'eew'}-${h.reportNum}-${i}`}
-                className={`px-1.5 py-0.2 rounded font-mono text-[10px] ${
-                  h.reportNum === currentEEW.reportNum
-                    ? 'bg-cyan-500 text-white font-bold'
-                    : 'bg-slate-800 text-slate-400'
-                }`}
-                title={`第${h.reportNum}報: M${h.magnitude} 最大${h.maxIntensity}`}
-              >
-                #{h.reportNum}
-              </span>
-            ))}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 text-slate-300 font-semibold shrink-0">
+            <History className="w-3 h-3 text-cyan-400" />
+            <span>発報履歴:</span>
+          </div>
+          <div className="flex items-center gap-1 overflow-x-auto max-w-[500px] py-0.5">
+            {eewHistory.map((h, i) => {
+              const isCurrent = h.reportNum === currentEEW.reportNum;
+              const isFinalTag = h.isFinal && !h.isCancel;
+              const isCancelTag = h.isCancel;
+
+              return (
+                <span
+                  key={`eew-history-${h.eventId || 'eew'}-${h.reportNum}-${i}`}
+                  className={`px-1.5 py-0.5 rounded font-mono text-[10px] transition-all flex items-center gap-0.5 ${
+                    isCancelTag
+                      ? 'bg-rose-950 border border-rose-500/80 text-rose-200 font-bold'
+                      : isCurrent
+                      ? 'bg-cyan-500 text-slate-950 font-black shadow-sm scale-105'
+                      : isFinalTag
+                      ? 'bg-amber-950/80 border border-amber-500/60 text-amber-300 font-bold'
+                      : 'bg-slate-800/90 text-slate-300 hover:bg-slate-700'
+                  }`}
+                  title={`第${h.reportNum}報 ${isCancelTag ? '(取消)' : isFinalTag ? '(最終)' : ''} [${h.reportTime}] M${h.magnitude} 最大${h.maxIntensity}`}
+                >
+                  <span>#{h.reportNum}</span>
+                  {isCancelTag && <span className="text-[9px] font-sans">取消</span>}
+                  {isFinalTag && !isCancelTag && <span className="text-[9px] font-sans">最終</span>}
+                </span>
+              );
+            })}
           </div>
         </div>
-        <span className="font-mono text-slate-400">
-          PLUM/物理減衰式: 適用済
+        <span className="font-mono text-slate-400 text-[10px] shrink-0">
+          全{eewHistory.length}報 記録
         </span>
       </div>
     </div>
