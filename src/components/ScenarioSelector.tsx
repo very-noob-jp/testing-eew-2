@@ -4,22 +4,34 @@
  */
 
 import React, { useState } from 'react';
-import { Sliders, PlusCircle, AlertTriangle, Flame, ShieldAlert, Sparkles } from 'lucide-react';
+import { Sliders, PlusCircle, AlertTriangle, Flame, ShieldAlert, Sparkles, Zap, Waves } from 'lucide-react';
 import { PRESET_SCENARIOS } from '../data/presetScenarios';
 import { CancelReason, Scenario } from '../types/earthquake';
 
 interface ScenarioSelectorProps {
   currentScenario: Scenario;
+  isRunning?: boolean;
   onSelectScenario: (scenarioId: string) => void;
   onApplyCustomScenario: (custom: Scenario) => void;
+  onTriggerAftershock?: (magnitude?: number) => void;
 }
 
 export const ScenarioSelector: React.FC<ScenarioSelectorProps> = ({
   currentScenario,
+  isRunning = false,
   onSelectScenario,
   onApplyCustomScenario,
+  onTriggerAftershock,
 }) => {
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const [aftershockFeedback, setAftershockFeedback] = useState<string | null>(null);
+
+  const handleTriggerAftershockClick = (mag: number) => {
+    if (!onTriggerAftershock) return;
+    onTriggerAftershock(mag);
+    setAftershockFeedback(`M${mag}の余震を誘発しました！`);
+    setTimeout(() => setAftershockFeedback(null), 3000);
+  };
 
   // カスタムシナリオの入力ステート
   const [customName, setCustomName] = useState('カスタム地震訓練');
@@ -75,6 +87,62 @@ export const ScenarioSelector: React.FC<ScenarioSelectorProps> = ({
         </button>
       </div>
 
+      {/* リアルタイム余震誘発コントロール (実行中) */}
+      {onTriggerAftershock && (
+        <div className="mb-3.5 p-3 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-950/40 via-slate-900/80 to-slate-900/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400 animate-bounce" />
+              <span className="text-xs font-bold text-amber-200">
+                余震・続発地震 リアルタイム誘発コントロール
+              </span>
+              {isRunning && (
+                <span className="px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-500/80 text-emerald-300 font-mono text-[9px] animate-pulse">
+                  SIMULATION ACTIVE
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              シミュレーション進行中にクリックすると、新たな余震が即座に割り込み発生し、連動波面とEEW続報が配信されます。
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => handleTriggerAftershockClick(6.0)}
+              disabled={!isRunning}
+              className="px-2.5 py-1.5 rounded-lg border border-amber-600/70 bg-amber-950/70 hover:bg-amber-800 text-amber-200 font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 shadow"
+              title="M6.0の余震を即時発生させます"
+            >
+              ⚡ M6.0 余震
+            </button>
+            <button
+              onClick={() => handleTriggerAftershockClick(6.8)}
+              disabled={!isRunning}
+              className="px-2.5 py-1.5 rounded-lg border border-orange-600/80 bg-orange-950/80 hover:bg-orange-800 text-orange-200 font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 shadow"
+              title="M6.8の規模の大きい余震を即時発生させます"
+            >
+              ⚡ M6.8 大余震
+            </button>
+            <button
+              onClick={() => handleTriggerAftershockClick(7.4)}
+              disabled={!isRunning}
+              className="px-2.5 py-1.5 rounded-lg border border-rose-600/80 bg-rose-950/80 hover:bg-rose-800 text-rose-200 font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95 shadow"
+              title="M7.4の巨大余震を即時発生させます"
+            >
+              ⚡ M7.4 巨大余震
+            </button>
+          </div>
+        </div>
+      )}
+
+      {aftershockFeedback && (
+        <div className="mb-3 p-2 rounded-lg bg-amber-500/20 border border-amber-400/60 text-amber-200 text-xs font-bold flex items-center gap-2 animate-pulse">
+          <Zap className="w-3.5 h-3.5 text-amber-400" />
+          <span>{aftershockFeedback}</span>
+        </div>
+      )}
+
       {/* Preset Scenarios Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {PRESET_SCENARIOS.map((sc) => {
@@ -97,6 +165,18 @@ export const ScenarioSelector: React.FC<ScenarioSelectorProps> = ({
                   <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800">
                     取消報
                   </span>
+                ) : sc.ruptureStyle === 'megathrust_full' ? (
+                  <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 animate-pulse">
+                    海溝全割れ M9.1
+                  </span>
+                ) : sc.ruptureStyle === 'megathrust_half' ? (
+                  <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">
+                    半割れ臨時情報
+                  </span>
+                ) : sc.ruptureStyle === 'sequence' ? (
+                  <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800">
+                    前震・余震系列
+                  </span>
                 ) : sc.magnitude >= 7.5 ? (
                   <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-800">
                     大警報
@@ -111,6 +191,13 @@ export const ScenarioSelector: React.FC<ScenarioSelectorProps> = ({
               <p className="text-[11px] text-slate-400 mt-1.5 line-clamp-2 leading-relaxed">
                 {sc.description}
               </p>
+
+              {sc.events && sc.events.length > 0 && (
+                <div className="flex items-center gap-1.5 text-[10px] text-cyan-400 font-mono mt-1.5">
+                  <Waves className="w-3 h-3 text-cyan-400 shrink-0" />
+                  <span>連動破壊セグメント: {sc.events.length}箇所</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-between border-t border-slate-800/80 pt-2 mt-2 text-[10px] text-slate-400 font-mono">
                 <span>{sc.epicenterName}</span>

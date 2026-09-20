@@ -91,6 +91,45 @@ export interface ShindoFlashReport {
   areas: ShindoFlashArea[];
 }
 
+export interface SubEvent {
+  id: string;
+  name: string;
+  type: 'foreshock' | 'mainshock' | 'aftershock' | 'secondary_rupture';
+  triggerTimeSec: number;
+  epicenterName: string;
+  lat: number;
+  lon: number;
+  depthKm: number;
+  magnitude: number;
+  faultType?: 'crustal' | 'interplate' | 'intraplate';
+  faultStart?: { lat: number; lon: number };
+  faultEnd?: { lat: number; lon: number };
+  description?: string;
+}
+
+export interface SpecialAdvisory {
+  type: '巨大地震警戒' | '巨大地震注意' | '調査終了';
+  announcedTime: string;
+  headline: string;
+  targetArea: string;
+  description: string;
+}
+
+export interface WaveFront {
+  eventId: string;
+  name: string;
+  type: 'foreshock' | 'mainshock' | 'aftershock' | 'secondary_rupture';
+  lat: number;
+  lon: number;
+  depthKm: number;
+  magnitude: number;
+  epicenterName: string;
+  triggerTimeSec: number;
+  elapsedSinceTrigger: number;
+  pWaveRadiusKm: number;
+  sWaveRadiusKm: number;
+}
+
 export interface Scenario {
   id: string;
   name: string;
@@ -108,6 +147,15 @@ export interface Scenario {
     reason: CancelReason;
     noiseStationCode?: string;
   };
+  events?: SubEvent[];
+  specialAdvisoryConfig?: {
+    type: '巨大地震警戒' | '巨大地震注意' | '調査終了';
+    triggerAfterSec: number;
+    headline: string;
+    targetArea: string;
+    description: string;
+  };
+  ruptureStyle?: 'single' | 'sequence' | 'megathrust_full' | 'megathrust_half';
 }
 
 export interface SimulationState {
@@ -118,10 +166,13 @@ export interface SimulationState {
   scenario: Scenario;
   pWaveRadiusKm: number;
   sWaveRadiusKm: number;
+  activeWaveFronts?: WaveFront[];
+  activeEvents?: SubEvent[];
   currentEEW: EEWReport | null;
   eewHistory: EEWReport[];
   shindoFlash: ShindoFlashReport | null;
   shindoHistory: ShindoFlashReport[];
+  specialAdvisory?: SpecialAdvisory | null;
   connectedClients: number;
   totalBroadcasts: number;
   stations: Station[];

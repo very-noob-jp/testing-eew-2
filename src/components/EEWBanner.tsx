@@ -15,19 +15,21 @@ import {
   Clock,
   Radio,
 } from 'lucide-react';
-import { EEWReport } from '../types/earthquake';
+import { EEWReport, SpecialAdvisory } from '../types/earthquake';
 import { audioAlert } from '../utils/audioAlert';
 
 interface EEWBannerProps {
   currentEEW: EEWReport | null;
   eewHistory: EEWReport[];
   elapsedSec: number;
+  specialAdvisory?: SpecialAdvisory | null;
 }
 
 export const EEWBanner: React.FC<EEWBannerProps> = ({
   currentEEW,
   eewHistory,
   elapsedSec,
+  specialAdvisory,
 }) => {
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -47,35 +49,83 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
     audioAlert.setSoundEnabled(next);
   };
 
+  const renderSpecialAdvisory = () => {
+    if (!specialAdvisory) return null;
+    const isWarning = specialAdvisory.type === '巨大地震警戒';
+    return (
+      <div
+        className={`rounded-xl border-2 p-3.5 shadow-2xl relative overflow-hidden text-slate-100 mb-3 ${
+          isWarning
+            ? 'border-purple-500 bg-purple-950/80 ring-2 ring-purple-500/50 animate-pulse'
+            : 'border-amber-500 bg-amber-950/80 ring-2 ring-amber-500/40'
+        }`}
+      >
+        <div
+          className={`absolute top-0 left-0 right-0 h-1.5 ${
+            isWarning ? 'bg-purple-500' : 'bg-amber-500'
+          }`}
+        />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`px-2.5 py-1 rounded font-black text-xs md:text-sm tracking-wider ${
+                isWarning ? 'bg-purple-600 text-white' : 'bg-amber-500 text-slate-950'
+              }`}
+            >
+              {isWarning
+                ? '南海トラフ地震臨時情報【巨大地震警戒】'
+                : '南海トラフ地震臨時情報【巨大地震注意】'}
+            </span>
+            <span className="text-xs font-mono text-slate-300">
+              {specialAdvisory.announcedTime} 発表
+            </span>
+          </div>
+          <span className="text-xs text-amber-200 font-bold">
+            対象: {specialAdvisory.targetArea}
+          </span>
+        </div>
+        <p className="text-xs font-bold text-white leading-relaxed">
+          {specialAdvisory.headline}
+        </p>
+        <p className="text-[11px] text-slate-200 mt-1 leading-relaxed">
+          {specialAdvisory.description}
+        </p>
+      </div>
+    );
+  };
+
   if (!currentEEW) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-slate-400 backdrop-blur flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center text-slate-500">
-            <Radio className="w-5 h-5 animate-pulse text-cyan-400" />
+      <div>
+        {renderSpecialAdvisory()}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-slate-400 backdrop-blur flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center text-slate-500">
+              <Radio className="w-5 h-5 animate-pulse text-cyan-400" />
+            </div>
+            <div>
+              <h3 className="text-xs md:text-sm font-bold text-slate-200">
+                緊急地震速報 (予報・警報) 待機中
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                観測点が閾値（加速度4gal以上）を検知すると直ちに第1報をWebSocket配信します。
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-xs md:text-sm font-bold text-slate-200">
-              緊急地震速報 (予報・警報) 待機中
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              観測点が閾値（加速度4gal以上）を検知すると直ちに第1報をWebSocket配信します。
-            </p>
-          </div>
-        </div>
 
-        <button
-          onClick={toggleSound}
-          title={soundEnabled ? '音声をミュート' : '音声を有効化'}
-          className={`p-2 rounded-lg border text-xs transition-colors flex items-center gap-1.5 ${
-            soundEnabled
-              ? 'bg-slate-800 border-slate-700 text-cyan-400 hover:text-white'
-              : 'bg-slate-900 border-slate-800 text-slate-500'
-          }`}
-        >
-          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          <span className="hidden sm:inline">{soundEnabled ? '警報音: ON' : '警報音: OFF'}</span>
-        </button>
+          <button
+            onClick={toggleSound}
+            title={soundEnabled ? '音声をミュート' : '音声を有効化'}
+            className={`p-2 rounded-lg border text-xs transition-colors flex items-center gap-1.5 ${
+              soundEnabled
+                ? 'bg-slate-800 border-slate-700 text-cyan-400 hover:text-white'
+                : 'bg-slate-900 border-slate-800 text-slate-500'
+            }`}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            <span className="hidden sm:inline">{soundEnabled ? '警報音: ON' : '警報音: OFF'}</span>
+          </button>
+        </div>
       </div>
     );
   }
@@ -83,43 +133,46 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
   // キャンセル報 (取消報)
   if (currentEEW.isCancel) {
     return (
-      <div className="rounded-xl border-2 border-red-500/90 bg-slate-950 p-4 shadow-2xl relative overflow-hidden text-slate-100">
-        <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-600 animate-pulse" />
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-red-900/60 pb-3 mb-3">
-          <div className="flex items-center gap-2.5">
-            <span className="px-3 py-1 rounded bg-red-600 text-white font-black text-xs md:text-sm uppercase tracking-wider animate-pulse">
-              緊急地震速報（取消）
-            </span>
-            <span className="text-xs font-mono text-red-300 font-bold">
-              第{currentEEW.reportNum}報（最終）
-            </span>
-            <span className="text-xs text-slate-400 font-mono">
-              {currentEEW.reportTime} 発表
-            </span>
+      <div>
+        {renderSpecialAdvisory()}
+        <div className="rounded-xl border-2 border-red-500/90 bg-slate-950 p-4 shadow-2xl relative overflow-hidden text-slate-100">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-600 animate-pulse" />
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-red-900/60 pb-3 mb-3">
+            <div className="flex items-center gap-2.5">
+              <span className="px-3 py-1 rounded bg-red-600 text-white font-black text-xs md:text-sm uppercase tracking-wider animate-pulse">
+                緊急地震速報（取消）
+              </span>
+              <span className="text-xs font-mono text-red-300 font-bold">
+                第{currentEEW.reportNum}報（最終）
+              </span>
+              <span className="text-xs text-slate-400 font-mono">
+                {currentEEW.reportTime} 発表
+              </span>
+            </div>
+
+            <button
+              onClick={toggleSound}
+              className="p-1.5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-white"
+            >
+              {soundEnabled ? <Volume2 className="w-4 h-4 text-cyan-400" /> : <VolumeX className="w-4 h-4" />}
+            </button>
           </div>
 
-          <button
-            onClick={toggleSound}
-            className="p-1.5 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-white"
-          >
-            {soundEnabled ? <Volume2 className="w-4 h-4 text-cyan-400" /> : <VolumeX className="w-4 h-4" />}
-          </button>
-        </div>
-
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-red-950 border border-red-600 flex items-center justify-center text-red-400 shrink-0">
-            <XCircle className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-base md:text-lg font-black text-red-400 line-through decoration-red-600 decoration-2">
-              先ほどの緊急地震速報（{currentEEW.hypocenterName}）は取り消されました
-            </h2>
-            <div className="mt-2 text-xs text-slate-300 bg-red-950/40 p-2.5 rounded border border-red-900/50">
-              <span className="font-bold text-amber-300">【取消理由】: </span>
-              <span>{currentEEW.cancelReason || '落雷等による観測点ノイズ誤検知'}</span>
-              <p className="text-[11px] text-slate-400 mt-1">
-                単一観測点のみの突発パルスが検知されたため発令されましたが、周辺観測点へのS波伝播が確認されなかったため、気象庁実運用規定に基づき速やかに取消報が発信されました。
-              </p>
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-red-950 border border-red-600 flex items-center justify-center text-red-400 shrink-0">
+              <XCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-base md:text-lg font-black text-red-400 line-through decoration-red-600 decoration-2">
+                先ほどの緊急地震速報（{currentEEW.hypocenterName}）は取り消されました
+              </h2>
+              <div className="mt-2 text-xs text-slate-300 bg-red-950/40 p-2.5 rounded border border-red-900/50">
+                <span className="font-bold text-amber-300">【取消理由】: </span>
+                <span>{currentEEW.cancelReason || '落雷等による観測点ノイズ誤検知'}</span>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  単一観測点のみの突発パルスが検知されたため発令されましたが、周辺観測点へのS波伝播が確認されなかったため、気象庁実運用規定に基づき速やかに取消報が発信されました。
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -131,13 +184,15 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
   const isWarn = currentEEW.isWarn;
 
   return (
-    <div
-      className={`rounded-xl border-2 p-4 shadow-2xl relative overflow-hidden transition-all text-slate-100 ${
-        isWarn
-          ? 'border-red-500 bg-gradient-to-r from-red-950/95 via-slate-950 to-red-950/95 shadow-red-950/60'
-          : 'border-amber-500/90 bg-gradient-to-r from-amber-950/90 via-slate-950 to-amber-950/90 shadow-amber-950/50'
-      }`}
-    >
+    <div>
+      {renderSpecialAdvisory()}
+      <div
+        className={`rounded-xl border-2 p-4 shadow-2xl relative overflow-hidden transition-all text-slate-100 ${
+          isWarn
+            ? 'border-red-500 bg-gradient-to-r from-red-950/95 via-slate-950 to-red-950/95 shadow-red-950/60'
+            : 'border-amber-500/90 bg-gradient-to-r from-amber-950/90 via-slate-950 to-amber-950/90 shadow-amber-950/50'
+        }`}
+      >
       {/* テレビ画面風の赤・黄フラッシュバー */}
       <div
         className={`absolute top-0 left-0 right-0 h-2 ${
@@ -330,6 +385,7 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
           全{eewHistory.length}報 記録
         </span>
       </div>
+    </div>
     </div>
   );
 };

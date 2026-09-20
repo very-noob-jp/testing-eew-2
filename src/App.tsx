@@ -17,7 +17,7 @@ import { CsvImportModal } from './components/CsvImportModal';
 import { PRESET_SCENARIOS } from './data/presetScenarios';
 import { KNET_STATIONS, BaseStationInfo } from './data/knetStations';
 import { EEWSimulationEngine } from './physics/eewEngine';
-import { EEWReport, Scenario, ShindoFlashReport, Station } from './types/earthquake';
+import { EEWReport, Scenario, ShindoFlashReport, Station, SpecialAdvisory, WaveFront } from './types/earthquake';
 import {
   createWolfxFormat,
   createP2PEEWFormat,
@@ -35,9 +35,11 @@ export default function App() {
   const [connectedClients, setConnectedClients] = useState(1);
   const [totalBroadcasts, setTotalBroadcasts] = useState(0);
 
-  // 物理走時・波動伝播
+  // 物理走時・波動伝播 (複数波面対応)
   const [pWaveRadiusKm, setPWaveRadiusKm] = useState(0);
   const [sWaveRadiusKm, setSWaveRadiusKm] = useState(0);
+  const [activeWaveFronts, setActiveWaveFronts] = useState<WaveFront[]>([]);
+  const [specialAdvisory, setSpecialAdvisory] = useState<SpecialAdvisory | null>(null);
 
   // 観測点状態 (ユーザー提供の intensity-points-v1 (1).csv 全1749地点公式データ)
   const [stationBases, setStationBases] = useState<BaseStationInfo[]>(KNET_STATIONS);
@@ -143,6 +145,15 @@ export default function App() {
                 return [...prev, msg.data];
               });
               setTotalBroadcasts((t) => t + 1);
+            } else if (msg.type === 'special_advisory') {
+              setSpecialAdvisory(msg.data);
+            } else if (msg.type === 'wave_fronts') {
+              setActiveWaveFronts(msg.data);
+            } else if (msg.type === 'aftershock_triggered') {
+              setLogs((prev) => [
+                ...prev.slice(-80),
+                { timestamp: now, type: 'aftershock_triggered', payload: msg.data },
+              ]);
             } else if (msg.type === 'simulation_reset') {
               handleLocalReset();
             }
@@ -207,7 +218,11 @@ export default function App() {
       // 実時間経過秒数をミリ秒精度で正確に計算 (タイマードリフト一切なし)
       const realElapsedMs = now - startTimeRef.current;
       const computedSec = baseElapsedRef.current + (realElapsedMs / 1000) * speedRef.current;
-      const next = Math.min(90, Math.round(computedSec * 10) / 10);
+      const maxDurationSec =
+        scenario.events && scenario.events.length > 0
+          ? Math.max(100, ...scenario.events.map((e) => e.triggerTimeSec + 55))
+          : 90;
+      const next = Math.min(maxDurationSec, Math.round(computedSec * 10) / 10);
 
       // 前フレームと秒数が変化した場合、または初回に計算・更新
       if (next !== elapsedSecRef.current || now - lastRenderTime >= 33) {
@@ -221,6 +236,10 @@ export default function App() {
         setStations([...result.stations]);
         setPWaveRadiusKm(result.pWaveRadiusKm);
         setSWaveRadiusKm(result.sWaveRadiusKm);
+        setActiveWaveFronts(result.activeWaveFronts || []);
+        if (result.newSpecialAdvisory) {
+          setSpecialAdvisory(result.newSpecialAdvisory);
+        }
 
         if (result.newEEW) {
           const eew = result.newEEW;
@@ -265,7 +284,7 @@ export default function App() {
           ]);
         }
 
-        if (next >= 90) {
+        if (next >= maxDurationSec) {
           setIsRunning(false);
           return;
         }
@@ -325,6 +344,8 @@ export default function App() {
     setElapsedSec(0);
     setPWaveRadiusKm(0);
     setSWaveRadiusKm(0);
+    setActiveWaveFronts([]);
+    setSpecialAdvisory(null);
     setCurrentEEW(null);
     setEewHistory([]);
     setCurrentShindoFlash(null);
@@ -332,6 +353,31 @@ export default function App() {
     clientEngineRef.current.reset(sc);
     setStations([...clientEngineRef.current.getStations()]);
   };
+
+  const handleTriggerAftershock = useCallback(async (customMag: number = 6.8) => {
+    const sub = clientEngineRef.current.triggerDynamicAftershock(customMag);
+    try {
+      await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'triggerAftershock', magnitude: customMag }),
+      });
+    } catch (e) {
+      // ignore
+    }
+    const nowStr = new Date().toLocaleTimeString('ja-JP');
+    setLogs((prev) => [
+      ...prev.slice(-80),
+      {
+        timestamp: nowStr,
+        type: 'aftershock_triggered',
+        payload: {
+          message: `M${customMag}の誘発余震を発生させました (${sub?.name || '余震'})`,
+          subEvent: sub,
+        },
+      },
+    ]);
+  }, []);
 
   const handleReset = () => {
     handleLocalReset();
@@ -506,6 +552,7 @@ export default function App() {
           currentEEW={currentEEW}
           eewHistory={eewHistory}
           elapsedSec={elapsedSec}
+          specialAdvisory={specialAdvisory}
         />
 
         {/* メインセクション: 地図 + サイドパネル */}
@@ -518,6 +565,8 @@ export default function App() {
               pWaveRadiusKm={pWaveRadiusKm}
               sWaveRadiusKm={sWaveRadiusKm}
               elapsedSec={elapsedSec}
+              activeWaveFronts={activeWaveFronts}
+              subEvents={scenario.events}
               currentShindoFlash={currentShindoFlash}
               selectedStationCode={selectedStationCode}
               onSelectStation={(st) => setSelectedStationCode(st ? st.code : null)}
@@ -562,8 +611,10 @@ export default function App() {
         <div className="space-y-4 pt-2">
           <ScenarioSelector
             currentScenario={scenario}
+            isRunning={isRunning}
             onSelectScenario={handleSelectScenario}
             onApplyCustomScenario={handleApplyCustomScenario}
+            onTriggerAftershock={handleTriggerAftershock}
           />
 
           <WebSocketLab

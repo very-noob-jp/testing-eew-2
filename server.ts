@@ -10,7 +10,14 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import { PRESET_SCENARIOS } from './src/data/presetScenarios';
 import { EEWSimulationEngine } from './src/physics/eewEngine';
-import { EEWReport, Scenario, ShindoFlashReport } from './src/types/earthquake';
+import {
+  EEWReport,
+  Scenario,
+  ShindoFlashReport,
+  SpecialAdvisory,
+  SubEvent,
+  WaveFront,
+} from './src/types/earthquake';
 import {
   createWolfxFormat,
   createP2PEEWFormat,
@@ -103,6 +110,10 @@ async function startServer() {
   const eewHistory: EEWReport[] = [];
   let currentShindoFlash: ShindoFlashReport | null = null;
   const shindoHistory: ShindoFlashReport[] = [];
+  let currentSpecialAdvisory: SpecialAdvisory | null = null;
+  const advisoryHistory: SpecialAdvisory[] = [];
+  let latestActiveWaveFronts: WaveFront[] = [];
+  let latestActiveEvents: SubEvent[] = [];
 
   // メッセージブロードキャスト関数 (チャンネル振り分け対応)
   function broadcast(payload: any, targetChannel = 'all') {
@@ -143,6 +154,8 @@ async function startServer() {
   function stepSimulation(deltaSec = 0.5) {
     elapsedSec += deltaSec;
     const result = engine.tick(elapsedSec);
+    latestActiveWaveFronts = result.activeWaveFronts;
+    latestActiveEvents = result.activeEvents;
 
     // 新しいEEW報が出た場合
     if (result.newEEW) {
@@ -184,6 +197,19 @@ async function startServer() {
       broadcast(createP2PShindoFormat(result.newShindoFlash), 'p2p');
     }
 
+    // 南海トラフ地震臨時情報などの特別情報が出た場合
+    if (result.newSpecialAdvisory) {
+      currentSpecialAdvisory = result.newSpecialAdvisory;
+      advisoryHistory.push(result.newSpecialAdvisory);
+
+      broadcast({
+        type: 'special_advisory',
+        timestamp: new Date().toISOString(),
+        elapsedSec: Math.round(elapsedSec * 10) / 10,
+        data: result.newSpecialAdvisory,
+      });
+    }
+
     // 強震モニタ観測点データの定期ブロードキャスト (1秒ごと)
     if (Math.floor(elapsedSec * 2) % 2 === 0) {
       broadcast(
@@ -193,6 +219,8 @@ async function startServer() {
           elapsedSec: Math.round(elapsedSec * 10) / 10,
           pWaveRadiusKm: Math.round(result.pWaveRadiusKm * 10) / 10,
           sWaveRadiusKm: Math.round(result.sWaveRadiusKm * 10) / 10,
+          activeWaveFronts: result.activeWaveFronts,
+          activeEvents: result.activeEvents,
           stations: result.stations.map((st) => ({
             ...st,
             gal: st.currentGal,
@@ -204,8 +232,12 @@ async function startServer() {
       );
     }
 
-    // 終了条件 (90秒経過で自動停止)
-    if (elapsedSec >= 90) {
+    // 終了条件 (全連動イベント終了後まで自動停止を延長)
+    const maxSimSec = currentScenario.events && currentScenario.events.length > 0
+      ? Math.max(100, ...currentScenario.events.map((e) => e.triggerTimeSec + 55))
+      : 90;
+
+    if (elapsedSec >= maxSimSec) {
       isRunning = false;
       if (timer) clearInterval(timer);
       timer = null;
@@ -333,6 +365,11 @@ async function startServer() {
       eewHistory,
       currentShindoFlash,
       shindoHistory,
+      currentSpecialAdvisory,
+      advisoryHistory,
+      activeWaveFronts: latestActiveWaveFronts,
+      activeEvents: latestActiveEvents,
+      subEvents: engine.getSubEvents(),
     });
   };
   app.get('/api/status', handleStatus);
@@ -354,9 +391,9 @@ async function startServer() {
     res.sendFile(csvPath);
   });
 
-  // REST API: 制御コマンド (start, pause, resume, reset, setSpeed, setScenario, cancel)
+  // REST API: 制御コマンド (start, pause, resume, reset, setSpeed, setScenario, cancel, triggerAftershock)
   const handleControl = (req: express.Request, res: express.Response) => {
-    const { action, scenarioId, customScenario, newSpeed, cancelReason } = req.body;
+    const { action, scenarioId, customScenario, newSpeed, cancelReason, aftershockParams } = req.body;
 
     switch (action) {
       case 'start':
@@ -367,6 +404,10 @@ async function startServer() {
           eewHistory.length = 0;
           currentShindoFlash = null;
           shindoHistory.length = 0;
+          currentSpecialAdvisory = null;
+          advisoryHistory.length = 0;
+          latestActiveWaveFronts = [];
+          latestActiveEvents = [];
         }
         isRunning = true;
         isPaused = false;
@@ -396,6 +437,10 @@ async function startServer() {
         eewHistory.length = 0;
         currentShindoFlash = null;
         shindoHistory.length = 0;
+        currentSpecialAdvisory = null;
+        advisoryHistory.length = 0;
+        latestActiveWaveFronts = [];
+        latestActiveEvents = [];
         broadcast({
           type: 'simulation_reset',
           timestamp: new Date().toISOString(),
@@ -420,6 +465,10 @@ async function startServer() {
             eewHistory.length = 0;
             currentShindoFlash = null;
             shindoHistory.length = 0;
+            currentSpecialAdvisory = null;
+            advisoryHistory.length = 0;
+            latestActiveWaveFronts = [];
+            latestActiveEvents = [];
           }
         } else if (customScenario) {
           currentScenario = customScenario;
@@ -429,8 +478,23 @@ async function startServer() {
           eewHistory.length = 0;
           currentShindoFlash = null;
           shindoHistory.length = 0;
+          currentSpecialAdvisory = null;
+          advisoryHistory.length = 0;
+          latestActiveWaveFronts = [];
+          latestActiveEvents = [];
         }
         break;
+
+      case 'triggerAftershock': {
+        const aftershock = engine.triggerDynamicAftershock(aftershockParams || req.body);
+        broadcast({
+          type: 'aftershock_triggered',
+          timestamp: new Date().toISOString(),
+          elapsedSec: Math.round(elapsedSec * 10) / 10,
+          event: aftershock,
+        });
+        return res.json({ status: 'ok', aftershock });
+      }
 
       case 'triggerCancel':
         // 手動で取消報を発令

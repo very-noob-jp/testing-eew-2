@@ -6,7 +6,7 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { JAPAN_COASTLINES, TRENCH_LINES, PREFECTURE_CENTERS } from '../data/japanCoastlines';
 import { getKyoshinColor, getKyoshinRGB, VP_KM_S, VS_KM_S } from '../physics/seismicPhysics';
-import { Scenario, Station, ShindoFlashReport } from '../types/earthquake';
+import { Scenario, Station, ShindoFlashReport, WaveFront, SubEvent } from '../types/earthquake';
 import { projectLatLonToCanvas, unprojectCanvasToLatLon } from '../utils/mapProjection';
 import {
   Layers,
@@ -28,6 +28,8 @@ interface KyoshinMapProps {
   pWaveRadiusKm: number;
   sWaveRadiusKm: number;
   elapsedSec: number;
+  activeWaveFronts?: WaveFront[];
+  subEvents?: SubEvent[];
   currentShindoFlash?: ShindoFlashReport | null;
   selectedStationCode?: string | null;
   onSelectStation?: (station: Station | null) => void;
@@ -52,6 +54,8 @@ export const KyoshinMap: React.FC<KyoshinMapProps> = React.memo(({
   pWaveRadiusKm,
   sWaveRadiusKm,
   elapsedSec,
+  activeWaveFronts,
+  subEvents,
   currentShindoFlash,
   selectedStationCode,
   onSelectStation,
@@ -412,114 +416,229 @@ export const KyoshinMap: React.FC<KyoshinMapProps> = React.memo(({
       ctx.restore();
     }
 
-    // 7. P波伝播円 (シアン破線)
-    if (pRadiusPx > 0) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(2, 132, 199, 0.08)';
-      ctx.beginPath();
-      ctx.arc(epicenterPoint.x, epicenterPoint.y, pRadiusPx, 0, Math.PI * 2);
-      ctx.fill();
+    // 7 & 8. P波・S波伝播円 (複数連動・前震・本震・余震の個別波面描画)
+    const waveFrontsToRender: Array<{
+      x: number;
+      y: number;
+      pRadiusPx: number;
+      sRadiusPx: number;
+      pWaveRadiusKm: number;
+      sWaveRadiusKm: number;
+      type?: string;
+      name?: string;
+      magnitude: number;
+      epicenterName: string;
+      isPrimary?: boolean;
+    }> = [];
 
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([6, 4]);
-      ctx.stroke();
-
-      // P波ラベル
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 9px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        `P波 (${VP_KM_S * elapsedSec < 1000 ? Math.round(pWaveRadiusKm) : '1000+'}km)`,
-        epicenterPoint.x,
-        epicenterPoint.y - pRadiusPx - 4
-      );
-      ctx.restore();
+    if (activeWaveFronts && activeWaveFronts.length > 0) {
+      for (const wf of activeWaveFronts) {
+        const pt = projectLatLonToCanvas(wf.lat, wf.lon, svgWidth, svgHeight);
+        const pPx = Math.max(0, wf.pWaveRadiusKm * kmToPixel);
+        const sPx = Math.max(0, wf.sWaveRadiusKm * kmToPixel);
+        waveFrontsToRender.push({
+          x: pt.x,
+          y: pt.y,
+          pRadiusPx: pPx,
+          sRadiusPx: sPx,
+          pWaveRadiusKm: wf.pWaveRadiusKm,
+          sWaveRadiusKm: wf.sWaveRadiusKm,
+          type: wf.type,
+          name: wf.name,
+          magnitude: wf.magnitude,
+          epicenterName: wf.epicenterName,
+          isPrimary: wf.type === 'mainshock',
+        });
+      }
+    } else {
+      waveFrontsToRender.push({
+        x: epicenterPoint.x,
+        y: epicenterPoint.y,
+        pRadiusPx,
+        sRadiusPx,
+        pWaveRadiusKm,
+        sWaveRadiusKm,
+        type: 'mainshock',
+        name: scenario.name,
+        magnitude: scenario.magnitude,
+        epicenterName: scenario.epicenterName,
+        isPrimary: true,
+      });
     }
 
-    // 8. S波伝播円 (赤・実線)
-    if (sRadiusPx > 0) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
-      ctx.beginPath();
-      ctx.arc(epicenterPoint.x, epicenterPoint.y, sRadiusPx, 0, Math.PI * 2);
-      ctx.fill();
+    // 各波面のP波・S波を描画
+    for (const wf of waveFrontsToRender) {
+      const typeLabel =
+        wf.type === 'foreshock'
+          ? '【前震】'
+          : wf.type === 'aftershock'
+          ? '【余震】'
+          : wf.type === 'segment'
+          ? '【連動断層】'
+          : '【本震】';
 
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 2.4;
-      ctx.stroke();
+      // P波 (シアン破線)
+      if (wf.pRadiusPx > 0) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(2, 132, 199, 0.07)';
+        ctx.beginPath();
+        ctx.arc(wf.x, wf.y, wf.pRadiusPx, 0, Math.PI * 2);
+        ctx.fill();
 
-      // S波ラベル
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 10px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        `S波 (${VS_KM_S * elapsedSec < 1000 ? Math.round(sWaveRadiusKm) : '1000+'}km)`,
-        epicenterPoint.x,
-        epicenterPoint.y - sRadiusPx - 4
-      );
-      ctx.restore();
+        ctx.strokeStyle =
+          wf.type === 'foreshock' ? '#38bdf8' : wf.type === 'aftershock' ? '#f59e0b' : '#38bdf8';
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([5, 4]);
+        ctx.stroke();
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 8.5px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          `${typeLabel}P波 (${Math.round(wf.pWaveRadiusKm)}km)`,
+          wf.x,
+          wf.y - wf.pRadiusPx - 4
+        );
+        ctx.restore();
+      }
+
+      // S波 (赤/橙・実線)
+      if (wf.sRadiusPx > 0) {
+        ctx.save();
+        ctx.fillStyle =
+          wf.type === 'aftershock'
+            ? 'rgba(249, 115, 22, 0.14)'
+            : wf.type === 'foreshock'
+            ? 'rgba(56, 189, 248, 0.12)'
+            : 'rgba(239, 68, 68, 0.16)';
+        ctx.beginPath();
+        ctx.arc(wf.x, wf.y, wf.sRadiusPx, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle =
+          wf.type === 'aftershock' ? '#f97316' : wf.type === 'foreshock' ? '#0284c7' : '#ef4444';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+
+        ctx.fillStyle =
+          wf.type === 'aftershock' ? '#fdba74' : wf.type === 'foreshock' ? '#bae6fd' : '#fca5a5';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          `${typeLabel}S波 (${Math.round(wf.sWaveRadiusKm)}km)`,
+          wf.x,
+          wf.y - wf.sRadiusPx - 4
+        );
+        ctx.restore();
+      }
     }
 
-    // 9. 断層破壊域 (破線)
-    if (scenario.faultStart && scenario.faultEnd) {
-      const fStart = projectLatLonToCanvas(
-        scenario.faultStart.lat,
-        scenario.faultStart.lon,
-        svgWidth,
-        svgHeight
-      );
-      const fEnd = projectLatLonToCanvas(
-        scenario.faultEnd.lat,
-        scenario.faultEnd.lon,
-        svgWidth,
-        svgHeight
-      );
+    // 9. 断層破壊域 (プレート境界・海溝断層セグメントの描画)
+    const allSegments: Array<{
+      start: { lat: number; lon: number };
+      end: { lat: number; lon: number };
+      isTriggered: boolean;
+      name?: string;
+    }> = [];
+
+    if (scenario.events && scenario.events.length > 0) {
+      for (const ev of scenario.events) {
+        if (ev.faultStart && ev.faultEnd) {
+          allSegments.push({
+            start: ev.faultStart,
+            end: ev.faultEnd,
+            isTriggered: elapsedSec >= ev.triggerTimeSec,
+            name: ev.name,
+          });
+        }
+      }
+    } else if (scenario.faultStart && scenario.faultEnd) {
+      allSegments.push({
+        start: scenario.faultStart,
+        end: scenario.faultEnd,
+        isTriggered: true,
+        name: scenario.name,
+      });
+    }
+
+    for (const seg of allSegments) {
+      const fStart = projectLatLonToCanvas(seg.start.lat, seg.start.lon, svgWidth, svgHeight);
+      const fEnd = projectLatLonToCanvas(seg.end.lat, seg.end.lon, svgWidth, svgHeight);
+
       ctx.save();
-      ctx.strokeStyle = 'rgba(244, 63, 94, 0.75)';
-      ctx.lineWidth = 3.5;
-      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = seg.isTriggered ? 'rgba(244, 63, 94, 0.9)' : 'rgba(234, 179, 8, 0.65)';
+      ctx.lineWidth = seg.isTriggered ? 4.0 : 2.5;
+      ctx.setLineDash(seg.isTriggered ? [8, 4] : [4, 4]);
       ctx.beginPath();
       ctx.moveTo(fStart.x, fStart.y);
       ctx.lineTo(fEnd.x, fEnd.y);
       ctx.stroke();
+
+      // セグメント中間位置にラベル
+      if (zoom >= 1.5 && seg.name) {
+        ctx.fillStyle = seg.isTriggered ? '#fda4af' : '#fef08a';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(seg.name, (fStart.x + fEnd.x) / 2, (fStart.y + fEnd.y) / 2 - 5);
+      }
       ctx.restore();
     }
 
-    // 10. 震央マーカー (×印)
-    ctx.save();
-    ctx.translate(epicenterPoint.x, epicenterPoint.y);
-    ctx.strokeStyle = '#dc2626';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(-10, -10);
-    ctx.lineTo(10, 10);
-    ctx.moveTo(10, -10);
-    ctx.lineTo(-10, 10);
-    ctx.stroke();
+    // 10. 震央マーカー (×印) & パルスリング (全アクティブ震源)
+    for (const wf of waveFrontsToRender) {
+      ctx.save();
+      ctx.translate(wf.x, wf.y);
 
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-10, -10);
-    ctx.lineTo(10, 10);
-    ctx.moveTo(10, -10);
-    ctx.lineTo(-10, 10);
-    ctx.stroke();
+      const crossColor =
+        wf.type === 'foreshock'
+          ? '#0ea5e9'
+          : wf.type === 'aftershock'
+          ? '#ea580c'
+          : wf.type === 'segment'
+          ? '#d97706'
+          : '#dc2626';
 
-    // 震央パルスリング
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, 16 + (Math.sin(elapsedSec * 4) * 4), 0, Math.PI * 2);
-    ctx.stroke();
+      ctx.strokeStyle = crossColor;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(-9, -9);
+      ctx.lineTo(9, 9);
+      ctx.moveTo(9, -9);
+      ctx.lineTo(-9, 9);
+      ctx.stroke();
 
-    // 震央ラベル
-    ctx.fillStyle = '#fecaca';
-    ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`${scenario.epicenterName} (M${scenario.magnitude.toFixed(1)})`, 0, -16);
-    ctx.restore();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-9, -9);
+      ctx.lineTo(9, 9);
+      ctx.moveTo(9, -9);
+      ctx.lineTo(-9, 9);
+      ctx.stroke();
+
+      // 震央パルスリング
+      ctx.strokeStyle = crossColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 14 + (Math.sin(elapsedSec * 4) * 4), 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 震央ラベル
+      const prefix =
+        wf.type === 'foreshock'
+          ? '前震 '
+          : wf.type === 'aftershock'
+          ? '余震 '
+          : wf.type === 'segment'
+          ? '連動 '
+          : '';
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${prefix}${wf.epicenterName} (M${wf.magnitude.toFixed(1)})`, 0, -14);
+      ctx.restore();
+    }
 
     // 10. 全1,749観測点の一括高速バッチ描画
     const hoverCode = hoveredStation?.code;
