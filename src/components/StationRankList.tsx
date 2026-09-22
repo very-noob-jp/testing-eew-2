@@ -172,11 +172,19 @@ export const StationRankList: React.FC<StationRankListProps> = React.memo(({
                         </span>
                         <span className="text-[10px] font-mono text-slate-500">({st.code})</span>
                       </div>
-                      <div className="text-[10px] text-slate-400">
-                        増幅率: <span className="text-emerald-400 font-mono">{st.siteAmp.toFixed(2)}x</span>
-                        <span className="mx-1.5 text-slate-600">|</span>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap">
+                        <span>増幅率: <span className="text-emerald-400 font-mono">{st.siteAmp.toFixed(2)}x</span></span>
+                        <span className="text-slate-600">|</span>
+                        {st.lpgmGrade && (
+                          <>
+                            <span className="px-1 py-0.2 rounded bg-purple-900/80 text-purple-200 border border-purple-500/50 font-bold text-[9px]">
+                              長周期 {st.lpgmGrade} ({st.lpgmSva?.toFixed(1) || 0}cm/s)
+                            </span>
+                            <span className="text-slate-600">|</span>
+                          </>
+                        )}
                         {st.sArrived ? (
-                          <span className="text-rose-400">主要動到達</span>
+                          <span className="text-rose-400 font-semibold">主要動到達</span>
                         ) : (
                           <span className="text-slate-500">
                             S波まで {Math.max(0, st.sTimeSec - elapsedSec).toFixed(1)}s

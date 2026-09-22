@@ -3,7 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { EEWReport, ShindoFlashReport, JMAIntensityGrade } from '../types/earthquake';
+import {
+  EEWReport,
+  ShindoFlashReport,
+  JMAIntensityGrade,
+  LPGMGrade,
+  P2PTsunamiReport,
+} from '../types/earthquake';
 
 // JMA震度表記からP2Pスケール数値への変換 (10=震度1, 45=5弱, 50=5強, 70=7)
 export function jmaGradeToP2PScale(grade: JMAIntensityGrade | string): number {
@@ -32,6 +38,22 @@ export function jmaGradeToP2PScale(grade: JMAIntensityGrade | string): number {
       return 0;
     default:
       return -1;
+  }
+}
+
+// 長周期地震動階級からP2Pスケール数値への変換 (10=階級1, 20=階級2, 30=階級3, 40=階級4)
+export function lpgmGradeToP2PScale(grade?: LPGMGrade | string): number {
+  switch (grade) {
+    case '階級1':
+      return 10;
+    case '階級2':
+      return 20;
+    case '階級3':
+      return 30;
+    case '階級4':
+      return 40;
+    default:
+      return 0;
   }
 }
 
@@ -249,6 +271,14 @@ export function createWolfxFormat(eew: EEWReport) {
     isCancel: Boolean(eew.isCancel),
     isAssumption: false,
     WarnArea: warnAreas,
+    // 長周期地震動予測 (Wolfx拡張仕様)
+    ForecastLpgm: eew.forecastLpgmIntensity
+      ? {
+          MaxLpgmIntensity: eew.forecastLpgmIntensity,
+          MaxLpgmIntensity_Scale: lpgmGradeToP2PScale(eew.forecastLpgmIntensity),
+          LpgmWarnArea: eew.lpgmWarningAreas || [],
+        }
+      : undefined,
     OriginalText: jmaRawText,
     status: 0,
   };
@@ -297,6 +327,13 @@ export function createP2PEEWFormat(eew: EEWReport) {
     isFinal: eew.isFinal,
     maxScale: eew.isCancel ? 0 : maxScale,
     areas: eew.isCancel ? [] : areas,
+    // 長周期地震動階級予測情報
+    lpgm: eew.forecastLpgmIntensity
+      ? {
+          maxScale: lpgmGradeToP2PScale(eew.forecastLpgmIntensity),
+          warningAreas: eew.lpgmWarningAreas || [],
+        }
+      : undefined,
   };
 }
 
@@ -307,13 +344,14 @@ export function createP2PShindoFormat(flash: ShindoFlashReport, _scenario?: any)
   const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/');
   const maxScale = jmaGradeToP2PScale(flash.maxIntensity);
 
-  // 観測点ポイント配列
+  // 観測点ポイント配列 (震度および長周期地震動階級)
   const points = flash.areas.flatMap((area) => {
     return area.stations.map((st) => ({
       pref: area.pref,
       addr: `${area.regionName} ${st.name}`,
       isArea: false,
       scale: jmaGradeToP2PScale(st.intensity),
+      lpgmScale: st.lpgmGrade ? lpgmGradeToP2PScale(st.lpgmGrade) : undefined,
     }));
   });
 
@@ -348,6 +386,38 @@ export function createP2PShindoFormat(flash: ShindoFlashReport, _scenario?: any)
         : 'None',
     },
     points: points,
+    // 長周期地震動に関する観測情報
+    lpgm: flash.maxLpgmGrade
+      ? {
+          maxScale: lpgmGradeToP2PScale(flash.maxLpgmGrade),
+          areas: (flash.lpgmAreas || []).map((a) => ({
+            pref: a.pref,
+            name: a.regionName,
+            scale: lpgmGradeToP2PScale(a.grade),
+            maxSva: a.maxSva,
+          })),
+        }
+      : undefined,
+  };
+}
+
+/**
+ * P2P地震情報 (P2PQuake v2) 津波予報 (Code: 552) 形式への変換
+ */
+export function createP2PTsunamiFormat(tsunami: P2PTsunamiReport) {
+  const timeStr = tsunami.time || new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/');
+  return {
+    id: tsunami.id || `p2p_tsunami_${Date.now()}`,
+    code: 552,
+    time: timeStr,
+    cancelled: Boolean(tsunami.cancelled),
+    test: tsunami.test ?? true,
+    issue: {
+      source: tsunami.issue?.source || '気象庁',
+      time: tsunami.issue?.time || timeStr,
+      type: 'Focus' as const,
+    },
+    areas: tsunami.areas || [],
   };
 }
 
@@ -395,6 +465,7 @@ export function createDmdssFormat(eew: EEWReport) {
             From: eew.maxIntensity,
             To: eew.maxIntensity,
           },
+          ForecastLpgmInt: eew.forecastLpgmIntensity,
           Appendix: {
             MaxIntChange: '0',
           },
@@ -402,6 +473,7 @@ export function createDmdssFormat(eew: EEWReport) {
       },
       Comments: {
         WarningAreas: eew.warningAreas,
+        LpgmWarningAreas: eew.lpgmWarningAreas,
         CancelReason: eew.cancelReason,
       },
     },

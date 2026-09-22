@@ -19,6 +19,82 @@ export const PRESET_SCENARIOS: Scenario[] = [
     ruptureStyle: 'megathrust_full',
     faultStart: { lat: 35.10, lon: 138.80 }, // 駿河湾・伊豆半島西
     faultEnd: { lat: 31.20, lon: 131.80 }, // 宮崎・日向灘 (750km 全破断)
+    tsunamiConfig: {
+      triggerAfterSec: 18,
+      headline: '太平洋沿岸の広範囲に大津波警報・津波警報を発表中',
+      areas: [
+        {
+          grade: 'MajorWarning',
+          name: '高知県',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '和歌山県',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '三重県南部',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '徳島県',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '宮崎県',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '静岡県',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 10, unit: 'm', description: '巨大 (10m超)' },
+        },
+        {
+          grade: 'MajorWarning',
+          name: '愛知県外海',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 5, unit: 'm', description: '巨大 (5m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '鹿児島県東部',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '大分県瀬戸内海沿岸',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '伊豆諸島',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+      ],
+    },
     events: [
       {
         id: 'nankai_stage_1',
@@ -240,6 +316,75 @@ export const PRESET_SCENARIOS: Scenario[] = [
     faultType: 'crustal',
     faultStart: { lat: 37.58, lon: 137.40 }, // 珠洲沖
     faultEnd: { lat: 36.95, lon: 136.65 }, // 志賀沖 (150km 逆断層破壊域)
+    tsunamiConfig: {
+      triggerAfterSec: 15,
+      headline: '日本海沿岸の広範囲に大津波警報・津波警報・注意報を発表中',
+      areas: [
+        {
+          grade: 'MajorWarning',
+          name: '石川県能登',
+          immediate: true,
+          firstHeight: { condition: 'ただちに津波来襲と予測' },
+          maxHeight: { value: 5, unit: 'm', description: '巨大 (5m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '山形県',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '新潟県上中下越',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '佐渡',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '富山県',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '石川県加賀',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '福井県',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Warning',
+          name: '兵庫県北部',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+        },
+        {
+          grade: 'Watch',
+          name: '京都府',
+          immediate: false,
+          firstHeight: { condition: '第1波到達中と推測' },
+          maxHeight: { value: 1, unit: 'm', description: '1m' },
+        },
+      ],
+    },
     events: [
       {
         id: 'noto_main',

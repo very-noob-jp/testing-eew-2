@@ -268,25 +268,51 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
           </div>
         </div>
 
-        {/* 右: 最大予測震度バッジ */}
-        <div className="flex items-center gap-3 bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 shrink-0">
-          <div className="text-right">
-            <div className="text-[10px] font-semibold text-slate-300">最大予測震度</div>
-            <div className="text-[11px] text-slate-400 font-mono">FORECAST</div>
+        {/* 右: 最大予測震度 & 予測長周期地震動バッジ */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {/* 最大予測震度 */}
+          <div className="flex items-center gap-3 bg-black/50 border border-white/10 rounded-xl px-4 py-2.5">
+            <div className="text-right">
+              <div className="text-[10px] font-semibold text-slate-300">最大予測震度</div>
+              <div className="text-[11px] text-slate-400 font-mono">FORECAST</div>
+            </div>
+            <div
+              className={`w-13 h-13 min-w-[50px] min-h-[50px] rounded-lg flex items-center justify-center font-black text-2xl shadow-inner ${
+                currentEEW.maxIntensity === '7'
+                  ? 'bg-purple-600 text-white border-2 border-purple-300'
+                  : currentEEW.maxIntensity.startsWith('6')
+                  ? 'bg-red-600 text-white border-2 border-red-300'
+                  : currentEEW.maxIntensity.startsWith('5')
+                  ? 'bg-amber-500 text-slate-950 border-2 border-amber-300'
+                  : 'bg-yellow-400 text-slate-950 border-2 border-yellow-200'
+              }`}
+            >
+              {currentEEW.maxIntensity}
+            </div>
           </div>
-          <div
-            className={`w-13 h-13 min-w-[50px] min-h-[50px] rounded-lg flex items-center justify-center font-black text-2xl shadow-inner ${
-              currentEEW.maxIntensity === '7'
-                ? 'bg-purple-600 text-white border-2 border-purple-300'
-                : currentEEW.maxIntensity.startsWith('6')
-                ? 'bg-red-600 text-white border-2 border-red-300'
-                : currentEEW.maxIntensity.startsWith('5')
-                ? 'bg-amber-500 text-slate-950 border-2 border-amber-300'
-                : 'bg-yellow-400 text-slate-950 border-2 border-yellow-200'
-            }`}
-          >
-            {currentEEW.maxIntensity}
-          </div>
+
+          {/* 予測長周期地震動階級 */}
+          {currentEEW.forecastLpgmIntensity && (
+            <div className="flex items-center gap-2.5 bg-black/50 border border-white/10 rounded-xl px-3.5 py-2.5">
+              <div className="text-right">
+                <div className="text-[10px] font-semibold text-purple-300">長周期地震動</div>
+                <div className="text-[10px] text-slate-400 font-mono">LPGM</div>
+              </div>
+              <div
+                className={`w-11 h-11 min-w-[44px] min-h-[44px] rounded-lg flex items-center justify-center font-black text-sm shadow-inner ${
+                  currentEEW.forecastLpgmIntensity === '階級4'
+                    ? 'bg-purple-700 text-white border-2 border-purple-300 ring-2 ring-purple-500/40 animate-pulse'
+                    : currentEEW.forecastLpgmIntensity === '階級3'
+                    ? 'bg-red-600 text-white border-2 border-red-300'
+                    : currentEEW.forecastLpgmIntensity === '階級2'
+                    ? 'bg-amber-500 text-slate-950 border-2 border-amber-300'
+                    : 'bg-yellow-400 text-slate-950 border-2 border-yellow-200'
+                }`}
+              >
+                {currentEEW.forecastLpgmIntensity}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -295,13 +321,33 @@ export const EEWBanner: React.FC<EEWBannerProps> = ({
         <div className="mt-3 pt-2.5 border-t border-white/10">
           <div className="text-[11px] font-bold text-red-200 flex items-center gap-1.5 mb-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-            <span>警報対象地域 (震度4以上予測):</span>
+            <span>緊急地震速報（警報）対象地域 (震度5弱以上予測):</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {currentEEW.warningAreas.map((area, i) => (
               <span
                 key={`warn-area-${area}-${i}`}
                 className="text-xs font-bold px-2.5 py-0.5 rounded bg-red-600/70 border border-red-400/80 text-white shadow-sm"
+              >
+                {area}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 長周期地震動警報 対象地域バッジ */}
+      {currentEEW.lpgmWarningAreas && currentEEW.lpgmWarningAreas.length > 0 && (
+        <div className="mt-2.5 pt-2 border-t border-purple-500/30">
+          <div className="text-[11px] font-bold text-purple-200 flex items-center gap-1.5 mb-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+            <span>長周期地震動警報 対象地域 (長周期地震動 階級3以上予測):</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {currentEEW.lpgmWarningAreas.map((area, i) => (
+              <span
+                key={`lpgm-warn-area-${area}-${i}`}
+                className="text-xs font-bold px-2.5 py-0.5 rounded bg-purple-900/80 border border-purple-400/80 text-purple-100 shadow-sm"
               >
                 {area}
               </span>

@@ -12,6 +12,7 @@ import { PRESET_SCENARIOS } from './src/data/presetScenarios';
 import { EEWSimulationEngine } from './src/physics/eewEngine';
 import {
   EEWReport,
+  P2PTsunamiReport,
   Scenario,
   ShindoFlashReport,
   SpecialAdvisory,
@@ -22,6 +23,7 @@ import {
   createWolfxFormat,
   createP2PEEWFormat,
   createP2PShindoFormat,
+  createP2PTsunamiFormat,
   createDmdssFormat,
 } from './src/utils/formatConverters';
 
@@ -112,6 +114,8 @@ async function startServer() {
   const shindoHistory: ShindoFlashReport[] = [];
   let currentSpecialAdvisory: SpecialAdvisory | null = null;
   const advisoryHistory: SpecialAdvisory[] = [];
+  let currentTsunami: P2PTsunamiReport | null = null;
+  const tsunamiHistory: P2PTsunamiReport[] = [];
   let latestActiveWaveFronts: WaveFront[] = [];
   let latestActiveEvents: SubEvent[] = [];
 
@@ -197,6 +201,23 @@ async function startServer() {
       broadcast(createP2PShindoFormat(result.newShindoFlash), 'p2p');
     }
 
+    // 新しい津波情報が出た場合 (P2P Code 552: 地震情報と同じURLに流す)
+    if (result.newTsunami) {
+      currentTsunami = result.newTsunami;
+      tsunamiHistory.push(result.newTsunami);
+
+      // 1. 標準津波情報
+      broadcast({
+        type: 'tsunami',
+        timestamp: new Date().toISOString(),
+        elapsedSec: Math.round(elapsedSec * 10) / 10,
+        data: result.newTsunami,
+      });
+
+      // 2. P2P地震情報 (Code 552 津波予報) 形式 - 地震情報と同じP2P WebSocket URLにブロードキャスト
+      broadcast(createP2PTsunamiFormat(result.newTsunami), 'p2p');
+    }
+
     // 南海トラフ地震臨時情報などの特別情報が出た場合
     if (result.newSpecialAdvisory) {
       currentSpecialAdvisory = result.newSpecialAdvisory;
@@ -226,6 +247,8 @@ async function startServer() {
             gal: st.currentGal,
             intensity: st.currentIntensity,
             grade: st.intensityGrade,
+            lpgmGrade: st.lpgmGrade,
+            lpgmSva: st.lpgmSva,
           })),
         },
         'kyoshin'
@@ -304,6 +327,12 @@ async function startServer() {
         if (currentEEW) {
           ws.send(JSON.stringify(createP2PEEWFormat(currentEEW)));
         }
+        if (currentShindoFlash) {
+          ws.send(JSON.stringify(createP2PShindoFormat(currentShindoFlash)));
+        }
+        if (currentTsunami) {
+          ws.send(JSON.stringify(createP2PTsunamiFormat(currentTsunami)));
+        }
       } else {
         // all / eew / kyoshin / dmdss チャンネルには案内メッセージを送信
         ws.send(
@@ -314,10 +343,10 @@ async function startServer() {
             endpoints: {
               all: '/ws/all (全形式・全ストリームメッセージ)',
               wolfx: '/ws/wolfx または /ws/jma_eew (Wolfx公式互換 jma_eew JSON)',
-              p2p: '/ws/p2p (P2P地震情報 Code 556/551 JSON)',
+              p2p: '/ws/p2p (P2P地震情報 Code 556/551/552 EEW・各地の震度・津波予報同一URL)',
               eew: '/ws/eew (緊急地震速報メッセージ)',
               dmdss: '/ws/dmdss (DM-DSS気象庁互換)',
-              kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム)',
+              kyoshin: '/ws/kyoshin (強震モニタ観測点ストリーム・長周期地震動Sva含む)',
             },
             currentStatus: {
               isRunning,
@@ -327,6 +356,7 @@ async function startServer() {
             },
             currentEEW,
             currentShindoFlash,
+            currentTsunami,
           })
         );
       }
@@ -367,6 +397,8 @@ async function startServer() {
       shindoHistory,
       currentSpecialAdvisory,
       advisoryHistory,
+      currentTsunami,
+      tsunamiHistory,
       activeWaveFronts: latestActiveWaveFronts,
       activeEvents: latestActiveEvents,
       subEvents: engine.getSubEvents(),
@@ -391,7 +423,7 @@ async function startServer() {
     res.sendFile(csvPath);
   });
 
-  // REST API: 制御コマンド (start, pause, resume, reset, setSpeed, setScenario, cancel, triggerAftershock)
+  // REST API: 制御コマンド (start, pause, resume, reset, setSpeed, setScenario, cancel, triggerAftershock, triggerTsunami)
   const handleControl = (req: express.Request, res: express.Response) => {
     const { action, scenarioId, customScenario, newSpeed, cancelReason, aftershockParams } = req.body;
 
@@ -406,6 +438,8 @@ async function startServer() {
           shindoHistory.length = 0;
           currentSpecialAdvisory = null;
           advisoryHistory.length = 0;
+          currentTsunami = null;
+          tsunamiHistory.length = 0;
           latestActiveWaveFronts = [];
           latestActiveEvents = [];
         }
@@ -439,6 +473,8 @@ async function startServer() {
         shindoHistory.length = 0;
         currentSpecialAdvisory = null;
         advisoryHistory.length = 0;
+        currentTsunami = null;
+        tsunamiHistory.length = 0;
         latestActiveWaveFronts = [];
         latestActiveEvents = [];
         broadcast({
@@ -467,6 +503,8 @@ async function startServer() {
             shindoHistory.length = 0;
             currentSpecialAdvisory = null;
             advisoryHistory.length = 0;
+            currentTsunami = null;
+            tsunamiHistory.length = 0;
             latestActiveWaveFronts = [];
             latestActiveEvents = [];
           }
@@ -480,6 +518,8 @@ async function startServer() {
           shindoHistory.length = 0;
           currentSpecialAdvisory = null;
           advisoryHistory.length = 0;
+          currentTsunami = null;
+          tsunamiHistory.length = 0;
           latestActiveWaveFronts = [];
           latestActiveEvents = [];
         }
@@ -494,6 +534,40 @@ async function startServer() {
           event: aftershock,
         });
         return res.json({ status: 'ok', aftershock });
+      }
+
+      case 'triggerTsunami': {
+        const customReport: P2PTsunamiReport = req.body.tsunami || {
+          id: `p2p_tsunami_${Date.now()}`,
+          code: 552,
+          time: new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/'),
+          cancelled: false,
+          test: true,
+          issue: {
+            source: '気象庁',
+            time: new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/'),
+            type: 'Focus',
+          },
+          areas: req.body.areas || [
+            {
+              grade: 'MajorWarning',
+              name: currentScenario.epicenterName.includes('能登') ? '石川県能登' : '高知県',
+              immediate: true,
+              firstHeight: { condition: 'ただちに津波来襲と予測' },
+              maxHeight: { value: 5, unit: 'm', description: '巨大 (5m)' },
+            },
+          ],
+        };
+        currentTsunami = customReport;
+        tsunamiHistory.push(customReport);
+        broadcast({
+          type: 'tsunami',
+          timestamp: new Date().toISOString(),
+          elapsedSec: Math.round(elapsedSec * 10) / 10,
+          data: customReport,
+        });
+        broadcast(createP2PTsunamiFormat(customReport), 'p2p');
+        return res.json({ status: 'ok', tsunami: customReport });
       }
 
       case 'triggerCancel':

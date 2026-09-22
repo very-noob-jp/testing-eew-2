@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { JMAIntensityGrade } from '../types/earthquake';
+import { JMAIntensityGrade, LPGMGrade } from '../types/earthquake';
 
 // 地球半径 (km)
 const EARTH_RADIUS_KM = 6371.0;
@@ -196,6 +196,97 @@ export function gradeToNumericRank(grade: JMAIntensityGrade | '震度0未満'): 
     case '1': return 2;
     case '0': return 1;
     default: return 0;
+  }
+}
+
+/**
+ * 絶対速度応答スペクトル Sva (cm/s, 周期1.6〜7.8秒) から気象庁長周期地震動階級への変換
+ * - 階級1: 5 cm/s 以上 15 cm/s 未満 (室内のほとんどの人が揺れを感じる)
+ * - 階級2: 15 cm/s 以上 50 cm/s 未満 (室内で大きな揺れ、物につかまりたい)
+ * - 階級3: 50 cm/s 以上 100 cm/s 未満 (立っていることが困難、什器が大きく動く)
+ * - 階級4: 100 cm/s 以上 (立っていられず、はいつくばらないと動けない)
+ */
+export function svaToLpgmGrade(sva: number): LPGMGrade {
+  if (sva < 5.0) return '階級0';
+  if (sva < 15.0) return '階級1';
+  if (sva < 50.0) return '階級2';
+  if (sva < 100.0) return '階級3';
+  return '階級4';
+}
+
+export function lpgmGradeToRank(grade?: LPGMGrade | string): number {
+  switch (grade) {
+    case '階級4': return 4;
+    case '階級3': return 3;
+    case '階級2': return 2;
+    case '階級1': return 1;
+    default: return 0;
+  }
+}
+
+/**
+ * 森川・藤原 (2013) および片岡 (2006) に基づく長周期地震動 (周期1.6〜7.8秒) 速度応答スペクトル Sva (cm/s) 計算
+ * - 規模 (Mw >= 6.5) と巨大断層破断で長周期波が強く励起
+ * - 堆積盆地 (関東平野・濃尾平野・大阪平野・新潟平野等) での深部堆積層共振増幅を反映
+ */
+export function calculateLPGM(
+  magnitude: number,
+  depthKm: number,
+  surfaceDistKm: number,
+  sedimentBasinAmp = 1.0,
+  faultType: 'crustal' | 'interplate' | 'intraplate' = 'interplate'
+): { sva: number; grade: LPGMGrade } {
+  // 小規模地震 (M < 5.5) では長周期成分は極めて小さい
+  if (magnitude < 5.5) {
+    return { sva: 0.5, grade: '階級0' };
+  }
+
+  const Mw = magnitude;
+  const X = calculateHypocenterDistance(surfaceDistKm, depthKm);
+  const safeX = Math.max(X, 10.0);
+
+  // 工学的基盤面 (Vs=600m/s) における周期約3〜5秒の平均速度応答スペクトル (cm/s)
+  // log10(Sva_600) = 0.65*Mw - 0.90*log10(X + 0.003*10^(0.5*Mw)) - 0.0012*X - 2.15
+  let cFault = 0.0;
+  if (faultType === 'interplate') cFault = 0.15; // プレート境界巨大地震は長周期卓越
+  else if (faultType === 'intraplate') cFault = -0.10;
+
+  const logSva600 =
+    0.68 * Mw -
+    0.92 * Math.log10(safeX + 0.0035 * Math.pow(10, 0.50 * Mw)) -
+    0.0010 * safeX -
+    2.15 +
+    cFault;
+
+  const baseSva = Math.max(0.01, Math.pow(10, logSva600));
+
+  // 深部堆積平野（関東平野、濃尾平野、大阪平野等）の共振増幅
+  // 堆積盆地では長周期波（表面波・ラブ波・レイリー波）がトラップされて2〜4倍に増幅
+  const effectiveAmp = Math.max(0.8, Math.min(4.5, sedimentBasinAmp));
+  const svaSurface = baseSva * effectiveAmp;
+
+  const sva = Math.round(svaSurface * 10) / 10;
+  return {
+    sva,
+    grade: svaToLpgmGrade(sva),
+  };
+}
+
+/**
+ * 長周期地震動階級カラー
+ */
+export function getLPGMColor(grade?: LPGMGrade | string): string {
+  switch (grade) {
+    case '階級4':
+      return '#ef4444'; // 赤 (立っていられない)
+    case '階級3':
+      return '#f97316'; // 橙 (立っていることが困難)
+    case '階級2':
+      return '#10b981'; // エメラルド緑 (大きな揺れ)
+    case '階級1':
+      return '#3b82f6'; // 青 (ほとんどの人が感じる)
+    default:
+      return '#64748b'; // スレートグレー (階級0)
   }
 }
 

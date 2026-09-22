@@ -15,6 +15,8 @@ export type JMAIntensityGrade =
   | '6強'
   | '7';
 
+export type LPGMGrade = '階級1' | '階級2' | '階級3' | '階級4' | '階級0';
+
 export interface Station {
   code: string;
   name: string;
@@ -23,12 +25,15 @@ export interface Station {
   lat: number;
   lon: number;
   siteAmp: number; // 表層地盤増幅率 (AVS30 based) 0.8 - 2.5
+  sedimentBasinAmp?: number; // 堆積盆地深部増幅係数 (長周期共振用)
   targetPga?: number; // 予測最大加速度 (事前計算キャッシュ)
   targetIntensity?: number; // 予測最大計測震度 (事前計算キャッシュ)
   surfaceDist?: number; // 震央距離 km (事前計算キャッシュ)
   currentGal: number; // 加速度 (cm/s^2)
   currentIntensity: number; // リアルタイム計測震度 (連続値, 例: 4.2)
   intensityGrade: JMAIntensityGrade | '震度0未満';
+  lpgmGrade?: LPGMGrade; // 長周期地震動階級 (階級1〜4)
+  lpgmSva?: number; // 長周期絶対速度応答スペクトル Sva (cm/s)
   pArrived: boolean;
   sArrived: boolean;
   pTimeSec: number;
@@ -55,14 +60,17 @@ export interface EEWReport {
   depthKm: number;
   magnitude: number;
   maxIntensity: JMAIntensityGrade;
+  forecastLpgmIntensity?: LPGMGrade; // 長周期地震動階級予測 (階級1〜4)
   isWarn: boolean; // 警報か予報か (true = 警報, false = 予報)
   isFinal: boolean;
   isCancel: boolean;
   cancelReason?: CancelReason;
   warningAreas: string[]; // 警報対象地域 (予測震度4以上の地域)
+  lpgmWarningAreas?: string[]; // 長周期地震動警報対象地域 (予測階級3以上の地域)
   forecastRegions: {
     regionName: string;
     forecastIntensity: JMAIntensityGrade;
+    forecastLpgmIntensity?: LPGMGrade;
     arrivalTimeSec: number;
   }[];
   plumTriggered?: boolean;
@@ -72,7 +80,8 @@ export interface ShindoFlashArea {
   pref: string;
   regionName: string;
   intensity: JMAIntensityGrade;
-  stations: { name: string; intensity: JMAIntensityGrade; gal: number }[];
+  lpgmGrade?: LPGMGrade;
+  stations: { name: string; intensity: JMAIntensityGrade; gal: number; lpgmGrade?: LPGMGrade }[];
 }
 
 export interface ShindoFlashReport {
@@ -86,9 +95,45 @@ export interface ShindoFlashReport {
   depthKm?: number;
   magnitude?: number;
   maxIntensity: JMAIntensityGrade;
+  maxLpgmGrade?: LPGMGrade; // 最大長周期地震動階級 (階級1〜4)
   tsunamiStatus: string;
   textMessage: string;
   areas: ShindoFlashArea[];
+  lpgmAreas?: {
+    pref: string;
+    regionName: string;
+    grade: LPGMGrade;
+    maxSva?: number;
+  }[];
+}
+
+export interface P2PTsunamiArea {
+  grade: 'MajorWarning' | 'Warning' | 'Watch' | 'Unknown';
+  name: string;
+  immediate: boolean;
+  firstHeight?: {
+    arrivalTime?: string;
+    condition?: string;
+  };
+  maxHeight?: {
+    value?: number;
+    unit?: string;
+    description?: string;
+  };
+}
+
+export interface P2PTsunamiReport {
+  id: string;
+  code: 552;
+  time: string;
+  cancelled: boolean;
+  test?: boolean;
+  issue: {
+    source: string;
+    time: string;
+    type: 'Focus';
+  };
+  areas: P2PTsunamiArea[];
 }
 
 export interface SubEvent {
@@ -156,6 +201,11 @@ export interface Scenario {
     description: string;
   };
   ruptureStyle?: 'single' | 'sequence' | 'megathrust_full' | 'megathrust_half';
+  tsunamiConfig?: {
+    triggerAfterSec: number;
+    headline: string;
+    areas: P2PTsunamiArea[];
+  };
 }
 
 export interface SimulationState {
@@ -172,6 +222,8 @@ export interface SimulationState {
   eewHistory: EEWReport[];
   shindoFlash: ShindoFlashReport | null;
   shindoHistory: ShindoFlashReport[];
+  currentTsunami?: P2PTsunamiReport | null;
+  tsunamiHistory?: P2PTsunamiReport[];
   specialAdvisory?: SpecialAdvisory | null;
   connectedClients: number;
   totalBroadcasts: number;

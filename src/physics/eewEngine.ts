@@ -7,6 +7,9 @@ import { KNET_STATIONS } from '../data/knetStations';
 import {
   EEWReport,
   JMAIntensityGrade,
+  LPGMGrade,
+  P2PTsunamiArea,
+  P2PTsunamiReport,
   Scenario,
   ShindoFlashArea,
   ShindoFlashReport,
@@ -20,9 +23,12 @@ import {
   calculateGroundMotion,
   calculateHypocenterDistance,
   calculateInstantaneousMotion,
+  calculateLPGM,
   calculateSurfaceDistance,
   gradeToNumericRank,
   intensityToGrade,
+  lpgmGradeToRank,
+  svaToLpgmGrade,
   VP_KM_S,
   VS_KM_S,
 } from './seismicPhysics';
@@ -36,6 +42,7 @@ export interface EngineTickResult {
   newEEW: EEWReport | null;
   newShindoFlash: ShindoFlashReport | null;
   newSpecialAdvisory: SpecialAdvisory | null;
+  newTsunami: P2PTsunamiReport | null;
 }
 
 interface SubEventState {
@@ -50,6 +57,34 @@ interface StationEventCalc {
   sTimeSec: number;
   targetPga: number;
   targetIntensity: number;
+  targetSva: number;
+  targetLpgmGrade: LPGMGrade;
+}
+
+/**
+ * 観測点の堆積盆地増幅率 (深部堆積層による長周期地震動の共振倍率)
+ */
+function getStationBasinAmp(pref: string, lat: number, lon: number): number {
+  // 関東平野 (東京、千葉、埼玉、神奈川、茨城南部)
+  if (['東京都', '千葉県', '埼玉県', '神奈川県'].includes(pref)) return 2.6;
+  if (pref === '茨城県' && lat <= 36.3) return 2.2;
+  // 濃尾平野 (愛知、三重北部、岐阜南部)
+  if (['愛知県'].includes(pref)) return 2.4;
+  if (pref === '三重県' && lat >= 34.8) return 2.2;
+  if (pref === '岐阜県' && lat <= 35.4) return 2.0;
+  // 大阪平野 (大阪府、京都南部、兵庫南部)
+  if (['大阪府'].includes(pref)) return 2.5;
+  if (pref === '京都府' && lat <= 35.1) return 2.1;
+  if (pref === '兵庫県' && lat <= 34.9 && lon >= 135.0) return 2.2;
+  // 新潟平野
+  if (pref === '新潟県' && lat >= 37.4 && lat <= 38.0) return 2.4;
+  // 仙台平野
+  if (pref === '宮城県' && lat >= 38.0 && lat <= 38.5) return 2.1;
+  // 北海道石狩平野・十勝平野
+  if (pref === '北海道' && ((lat >= 42.8 && lat <= 43.3 && lon >= 141.2 && lon <= 141.8) || (lon >= 143.0 && lon <= 143.5))) return 2.2;
+  // 太平洋沿岸平野部 (静岡、高知、徳島、宮崎)
+  if (['静岡県', '高知県', '徳島県', '宮崎県'].includes(pref)) return 1.8;
+  return 1.1; // 一般山地・硬質地盤
 }
 
 export class EEWSimulationEngine {
@@ -63,6 +98,7 @@ export class EEWSimulationEngine {
   private shindoStage1Issued = false;
   private shindoStage2Issued = false;
   private specialAdvisoryIssued = false;
+  private tsunamiIssued = false;
   private startTimeFormatted: string;
   private currentElapsedSec = 0;
 
@@ -109,14 +145,18 @@ export class EEWSimulationEngine {
 
     this.stations = KNET_STATIONS.map((base) => {
       const isNoiseStation = this.scenario.cancelConfig?.noiseStationCode === base.code;
+      const basinAmp = getStationBasinAmp(base.pref, base.lat, base.lon);
       return {
         ...base,
+        sedimentBasinAmp: basinAmp,
         surfaceDist: 0,
         targetPga: 0,
         targetIntensity: 0,
         currentGal: 0.05,
         currentIntensity: -1.8,
         intensityGrade: '震度0未満' as const,
+        lpgmGrade: '階級0' as LPGMGrade,
+        lpgmSva: 0.1,
         pArrived: false,
         sArrived: false,
         pTimeSec: 999,
@@ -160,6 +200,17 @@ export class EEWSimulationEngine {
             ev.faultType || 'interplate'
           );
 
+      // 長周期地震動 (Sva: 速度応答スペクトル & 階級1〜4)
+      const lpgm = isNoiseStation
+        ? { sva: 1.0, grade: '階級0' as LPGMGrade }
+        : calculateLPGM(
+            ev.magnitude,
+            ev.depthKm,
+            effectiveDist,
+            st.sedimentBasinAmp || 1.1,
+            ev.faultType || 'interplate'
+          );
+
       if (!this.stationEventParams.has(st.code)) {
         this.stationEventParams.set(st.code, new Map());
       }
@@ -168,6 +219,8 @@ export class EEWSimulationEngine {
         sTimeSec: ts,
         targetPga: motion.pga,
         targetIntensity: motion.intensity,
+        targetSva: lpgm.sva,
+        targetLpgmGrade: lpgm.grade,
       });
     }
   }
@@ -252,6 +305,7 @@ export class EEWSimulationEngine {
     this.shindoStage1Issued = false;
     this.shindoStage2Issued = false;
     this.specialAdvisoryIssued = false;
+    this.tsunamiIssued = false;
     const now = new Date();
     this.startTimeFormatted = now.toISOString();
     this.initEventsAndStations();
@@ -295,7 +349,7 @@ export class EEWSimulationEngine {
     const pWaveRadiusKm = latestWave ? latestWave.pWaveRadiusKm : 0;
     const sWaveRadiusKm = latestWave ? latestWave.sWaveRadiusKm : 0;
 
-    // 観測点の動的物理計算 (複数地震波のエネルギー・加速度合成)
+    // 観測点の動的物理計算 (複数地震波のエネルギー・加速度合成および長周期地震動Sva計算)
     const count = this.stations.length;
     let anyPArrivedCount = 0;
 
@@ -308,6 +362,8 @@ export class EEWSimulationEngine {
       let pArrivedAny = false;
       let sArrivedAny = false;
       let triggeredAny = false;
+      let maxSva = 0.1;
+      let bestLpgmGrade: LPGMGrade = '階級0';
 
       const stationCalcs = this.stationEventParams.get(st.code);
 
@@ -337,7 +393,17 @@ export class EEWSimulationEngine {
         }
 
         if (relSec >= calc.pTimeSec || isNoise) pArrivedAny = true;
-        if (relSec >= calc.sTimeSec) sArrivedAny = true;
+        if (relSec >= calc.sTimeSec) {
+          sArrivedAny = true;
+          // 長周期地震動 (主要動〜表面波フェーズのSva成長)
+          const sElapsed = relSec - calc.sTimeSec;
+          const lpgmRise = Math.min(1.0, Math.max(0.1, sElapsed / 4.5));
+          const currentSva = Math.round(calc.targetSva * lpgmRise * 10) / 10;
+          if (currentSva > maxSva) {
+            maxSva = currentSva;
+            bestLpgmGrade = svaToLpgmGrade(currentSva);
+          }
+        }
         if ((relSec >= calc.pTimeSec && motion.currentGal >= 4.0) || isNoise) {
           triggeredAny = true;
         }
@@ -352,6 +418,8 @@ export class EEWSimulationEngine {
       st.currentGal = Math.max(0.04, compositeGal);
       st.currentIntensity = finalIntensity;
       st.intensityGrade = grade;
+      st.lpgmSva = maxSva;
+      st.lpgmGrade = bestLpgmGrade;
       st.pArrived = pArrivedAny;
       st.sArrived = sArrivedAny;
       st.isTriggered = triggeredAny;
@@ -365,6 +433,7 @@ export class EEWSimulationEngine {
     let newEEW: EEWReport | null = null;
     let newShindoFlash: ShindoFlashReport | null = null;
     let newSpecialAdvisory: SpecialAdvisory | null = null;
+    let newTsunami: P2PTsunamiReport | null = null;
 
     if (
       this.scenario.cancelConfig &&
@@ -387,11 +456,13 @@ export class EEWSimulationEngine {
         depthKm: this.scenario.depthKm,
         magnitude: this.scenario.magnitude,
         maxIntensity: '0' as JMAIntensityGrade,
+        forecastLpgmIntensity: '階級0',
         isWarn: false,
         isFinal: true,
         isCancel: true,
         cancelReason: this.scenario.cancelConfig.reason,
         warningAreas: [],
+        lpgmWarningAreas: [],
         forecastRegions: [],
       };
 
@@ -404,6 +475,7 @@ export class EEWSimulationEngine {
         newEEW,
         newShindoFlash: null,
         newSpecialAdvisory: null,
+        newTsunami: null,
       };
     }
 
@@ -423,6 +495,23 @@ export class EEWSimulationEngine {
         targetArea: cfg.targetArea,
         description: cfg.description,
       };
+    }
+
+    // 津波警報・注意報 (P2P Code 552) の判定
+    const tsunamiTriggerSec = this.scenario.tsunamiConfig?.triggerAfterSec ?? 24;
+    const isTsunamiPotential =
+      this.scenario.magnitude >= 6.8 &&
+      this.scenario.depthKm <= 60 &&
+      (this.scenario.faultType === 'interplate' || Boolean(this.scenario.tsunamiConfig));
+
+    if (
+      !this.tsunamiIssued &&
+      !this.isCanceled &&
+      (this.scenario.tsunamiConfig || isTsunamiPotential) &&
+      elapsedSec >= tsunamiTriggerSec
+    ) {
+      this.tsunamiIssued = true;
+      newTsunami = this.generateTsunamiReport(elapsedSec);
     }
 
     // 各サブイベントごとのEEW発報判定
@@ -514,6 +603,73 @@ export class EEWSimulationEngine {
       newEEW,
       newShindoFlash,
       newSpecialAdvisory,
+      newTsunami,
+    };
+  }
+
+  private generateTsunamiReport(_elapsedSec: number): P2PTsunamiReport {
+    const now = new Date();
+    const timeStr = now.toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/');
+
+    if (this.scenario.tsunamiConfig && this.scenario.tsunamiConfig.areas.length > 0) {
+      return {
+        id: `p2p_tsunami_${this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14)}`,
+        code: 552,
+        time: timeStr,
+        cancelled: false,
+        test: true,
+        issue: {
+          source: '気象庁',
+          time: timeStr,
+          type: 'Focus',
+        },
+        areas: this.scenario.tsunamiConfig.areas,
+      };
+    }
+
+    // 自動計算による津波予報生成
+    const mag = this.scenario.magnitude;
+    const mainGrade: 'MajorWarning' | 'Warning' | 'Watch' =
+      mag >= 8.0 ? 'MajorWarning' : mag >= 7.2 ? 'Warning' : 'Watch';
+
+    const maxHeightVal = mag >= 8.5 ? 10 : mag >= 8.0 ? 5 : mag >= 7.5 ? 3 : 1;
+    const maxHeightDesc =
+      maxHeightVal >= 10 ? '巨大 (10m超)' : maxHeightVal >= 5 ? '巨大 (5m超)' : maxHeightVal >= 3 ? '高い (3m)' : '1m';
+
+    const coastalPrefSet = new Set<string>();
+    for (const st of this.stations) {
+      if ((st.surfaceDist ?? 999) <= 280) {
+        coastalPrefSet.add(st.pref);
+      }
+      if (coastalPrefSet.size >= 8) break;
+    }
+
+    const areas: P2PTsunamiArea[] = Array.from(coastalPrefSet).map((pref, idx) => ({
+      grade: idx < 3 ? mainGrade : idx < 6 ? (mainGrade === 'MajorWarning' ? 'Warning' : 'Watch') : 'Watch',
+      name: pref,
+      immediate: idx < 2,
+      firstHeight: {
+        condition: idx < 2 ? 'ただちに津波来襲と予測' : '第1波到達中と推測',
+      },
+      maxHeight: {
+        value: idx < 3 ? maxHeightVal : Math.max(1, Math.round(maxHeightVal / 2)),
+        unit: 'm',
+        description: idx < 3 ? maxHeightDesc : '高い',
+      },
+    }));
+
+    return {
+      id: `p2p_tsunami_${this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14)}`,
+      code: 552,
+      time: timeStr,
+      cancelled: false,
+      test: true,
+      issue: {
+        source: '気象庁',
+        time: timeStr,
+        type: 'Focus',
+      },
+      areas,
     };
   }
 
@@ -536,10 +692,15 @@ export class EEWSimulationEngine {
 
     let maxPredictedRank = 0;
     let maxPredictedGrade: JMAIntensityGrade = '1';
+    let maxPredictedLpgmRank = 0;
+    let maxPredictedLpgmGrade: LPGMGrade = '階級0';
+
     const warningAreaSet = new Set<string>();
+    const lpgmWarningAreaSet = new Set<string>();
     const forecastRegions: {
       regionName: string;
       forecastIntensity: JMAIntensityGrade;
+      forecastLpgmIntensity?: LPGMGrade;
       arrivalTimeSec: number;
     }[] = [];
 
@@ -551,25 +712,46 @@ export class EEWSimulationEngine {
       const grade = intensityToGrade(adjustedIntensity);
       const rank = gradeToNumericRank(grade);
 
+      // 長周期地震動予測
+      const magDiff = estMag - ev.magnitude;
+      const adjustedSva = Math.round(calc.targetSva * Math.pow(10, 0.68 * magDiff) * 10) / 10;
+      const lpgmGrade = svaToLpgmGrade(adjustedSva);
+      const lpgmRank = lpgmGradeToRank(lpgmGrade);
+
       if (rank > maxPredictedRank && grade !== '震度0未満') {
         maxPredictedRank = rank;
         maxPredictedGrade = grade;
       }
 
+      if (lpgmRank > maxPredictedLpgmRank) {
+        maxPredictedLpgmRank = lpgmRank;
+        maxPredictedLpgmGrade = lpgmGrade;
+      }
+
+      // 一般警報対象地域 (予測震度4以上)
       if (rank >= 5) {
         warningAreaSet.add(st.pref);
       }
 
-      if (rank >= 4 && forecastRegions.length < 15) {
+      // 長周期地震動警報対象地域 (予測階級3以上)
+      if (lpgmRank >= 3) {
+        lpgmWarningAreaSet.add(st.pref);
+      }
+
+      if ((rank >= 4 || lpgmRank >= 2) && forecastRegions.length < 15) {
         forecastRegions.push({
           regionName: `${st.pref} (${st.name})`,
           forecastIntensity: grade === '震度0未満' ? ('0' as JMAIntensityGrade) : grade,
+          forecastLpgmIntensity: lpgmGrade !== '階級0' ? lpgmGrade : undefined,
           arrivalTimeSec: Math.max(0, Math.round((calc.sTimeSec - relSec) * 10) / 10),
         });
       }
     }
 
-    const isWarn = (maxPredictedRank >= 6 || estMag >= 6.5) && triggeredCount >= 2;
+    // 気象庁最新基準: 震度5弱以上または長周期地震動階級3以上で警報発表
+    const isWarn =
+      (maxPredictedRank >= 6 || maxPredictedLpgmRank >= 3 || estMag >= 6.5) &&
+      triggeredCount >= 2;
 
     const baseId = this.startTimeFormatted.replace(/[-:T.Z]/g, '').slice(0, 14);
     const eventId = eventIndex === 0 ? baseId : `${baseId}_${eventIndex + 1}`;
@@ -585,10 +767,12 @@ export class EEWSimulationEngine {
       depthKm: estDepth,
       magnitude: estMag,
       maxIntensity: maxPredictedGrade,
+      forecastLpgmIntensity: maxPredictedLpgmRank > 0 ? maxPredictedLpgmGrade : undefined,
       isWarn,
       isFinal,
       isCancel: false,
       warningAreas: Array.from(warningAreaSet),
+      lpgmWarningAreas: Array.from(lpgmWarningAreaSet),
       forecastRegions: forecastRegions.sort(
         (a, b) =>
           gradeToNumericRank(b.forecastIntensity) - gradeToNumericRank(a.forecastIntensity)
@@ -602,7 +786,11 @@ export class EEWSimulationEngine {
 
     let maxIntensity: JMAIntensityGrade = '1';
     let maxRank = 1;
+    let maxLpgmRank = 0;
+    let maxLpgmGrade: LPGMGrade = '階級0';
+
     const areaMap = new Map<string, ShindoFlashArea>();
+    const lpgmAreaMap = new Map<string, { pref: string; regionName: string; grade: LPGMGrade; maxSva?: number }>();
 
     for (const st of this.stations) {
       const rawGrade =
@@ -611,7 +799,27 @@ export class EEWSimulationEngine {
           : intensityToGrade(st.targetIntensity ?? 1.0);
       const effectiveRank = gradeToNumericRank(rawGrade);
 
-      if (effectiveRank >= 3) {
+      const stLpgm = st.lpgmGrade || svaToLpgmGrade(st.lpgmSva || 0);
+      const stLpgmRank = lpgmGradeToRank(stLpgm);
+
+      if (stLpgmRank > maxLpgmRank) {
+        maxLpgmRank = stLpgmRank;
+        maxLpgmGrade = stLpgm;
+      }
+
+      if (stLpgmRank >= 1) {
+        const existing = lpgmAreaMap.get(st.pref);
+        if (!existing || stLpgmRank > lpgmGradeToRank(existing.grade)) {
+          lpgmAreaMap.set(st.pref, {
+            pref: st.pref,
+            regionName: st.pref,
+            grade: stLpgm,
+            maxSva: st.lpgmSva,
+          });
+        }
+      }
+
+      if (effectiveRank >= 3 || stLpgmRank >= 2) {
         const effectiveGrade = rawGrade as JMAIntensityGrade;
         if (effectiveRank > maxRank) {
           maxRank = effectiveRank;
@@ -623,6 +831,7 @@ export class EEWSimulationEngine {
             pref: st.pref,
             regionName: st.pref,
             intensity: effectiveGrade,
+            lpgmGrade: stLpgm !== '階級0' ? stLpgm : undefined,
             stations: [],
           });
         }
@@ -631,10 +840,14 @@ export class EEWSimulationEngine {
         if (effectiveRank > gradeToNumericRank(area.intensity)) {
           area.intensity = effectiveGrade;
         }
+        if (stLpgmRank > lpgmGradeToRank(area.lpgmGrade)) {
+          area.lpgmGrade = stLpgm;
+        }
         if (area.stations.length < 6) {
           area.stations.push({
             name: st.name,
             intensity: effectiveGrade,
+            lpgmGrade: stLpgm !== '階級0' ? stLpgm : undefined,
             gal: Math.max(st.currentGal ?? 0, Math.round((st.targetPga ?? 10) * 0.9)),
           });
         }
@@ -645,11 +858,23 @@ export class EEWSimulationEngine {
       (a, b) => gradeToNumericRank(b.intensity) - gradeToNumericRank(a.intensity)
     );
 
+    const lpgmAreas = Array.from(lpgmAreaMap.values()).sort(
+      (a, b) => lpgmGradeToRank(b.grade) - lpgmGradeToRank(a.grade)
+    );
+
+    let lpgmSection = '';
+    if (lpgmAreas.length > 0 && maxLpgmGrade !== '階級0') {
+      lpgmSection = `\n\n【長周期地震動に関する観測情報】
+最大長周期地震動階級: ${maxLpgmGrade}
+各地の長周期地震動階級:
+${lpgmAreas.map((a) => `■ ${a.grade}: ${a.pref}`).join('\n')}`;
+    }
+
     const text = `【震度速報】
 ${originTime}頃、地震による強い揺れを観測しました。
 震度３以上が観測された地域をお知らせします。（震源地・深さは気象庁で現在調査中）
 
-最大震度: 震度${maxIntensity}
+最大震度: 震度${maxIntensity}${lpgmSection}
 
 各地の震度は以下の通りです:
 ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
@@ -662,10 +887,12 @@ ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
       announcedTime: now.toLocaleTimeString('ja-JP'),
       originTime,
       maxIntensity,
+      maxLpgmGrade: maxLpgmRank > 0 ? maxLpgmGrade : undefined,
       tsunamiStatus:
         '現在、津波の影響を気象庁で調査中です。念のため海岸や河口付近から離れてください。',
       textMessage: text,
       areas,
+      lpgmAreas: lpgmAreas.length > 0 ? lpgmAreas : undefined,
     };
   }
 
@@ -675,13 +902,37 @@ ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
 
     let maxIntensity: JMAIntensityGrade = '1';
     let maxRank = 1;
+    let maxLpgmRank = 0;
+    let maxLpgmGrade: LPGMGrade = '階級0';
+
     const areaMap = new Map<string, ShindoFlashArea>();
+    const lpgmAreaMap = new Map<string, { pref: string; regionName: string; grade: LPGMGrade; maxSva?: number }>();
 
     for (const st of this.stations) {
       const finalGrade = intensityToGrade(st.currentIntensity);
       const rank = gradeToNumericRank(finalGrade);
 
-      if (rank >= 2) {
+      const stLpgm = st.lpgmGrade || svaToLpgmGrade(st.lpgmSva || 0);
+      const stLpgmRank = lpgmGradeToRank(stLpgm);
+
+      if (stLpgmRank > maxLpgmRank) {
+        maxLpgmRank = stLpgmRank;
+        maxLpgmGrade = stLpgm;
+      }
+
+      if (stLpgmRank >= 1) {
+        const existing = lpgmAreaMap.get(st.pref);
+        if (!existing || stLpgmRank > lpgmGradeToRank(existing.grade)) {
+          lpgmAreaMap.set(st.pref, {
+            pref: st.pref,
+            regionName: st.pref,
+            grade: stLpgm,
+            maxSva: st.lpgmSva,
+          });
+        }
+      }
+
+      if (rank >= 2 || stLpgmRank >= 1) {
         if (rank > maxRank) {
           maxRank = rank;
           maxIntensity = finalGrade as JMAIntensityGrade;
@@ -692,6 +943,7 @@ ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
             pref: st.pref,
             regionName: st.pref,
             intensity: finalGrade as JMAIntensityGrade,
+            lpgmGrade: stLpgm !== '階級0' ? stLpgm : undefined,
             stations: [],
           });
         }
@@ -700,10 +952,14 @@ ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
         if (rank > gradeToNumericRank(area.intensity)) {
           area.intensity = finalGrade as JMAIntensityGrade;
         }
+        if (stLpgmRank > lpgmGradeToRank(area.lpgmGrade)) {
+          area.lpgmGrade = stLpgm;
+        }
         if (area.stations.length < 6) {
           area.stations.push({
             name: st.name,
             intensity: finalGrade as JMAIntensityGrade,
+            lpgmGrade: stLpgm !== '階級0' ? stLpgm : undefined,
             gal: Math.round((st.currentGal ?? 10) * 10) / 10,
           });
         }
@@ -714,17 +970,30 @@ ${areas.map((a) => `■ 震度${a.intensity}: ${a.pref}`).join('\n')}
       (a, b) => gradeToNumericRank(b.intensity) - gradeToNumericRank(a.intensity)
     );
 
+    const lpgmAreas = Array.from(lpgmAreaMap.values()).sort(
+      (a, b) => lpgmGradeToRank(b.grade) - lpgmGradeToRank(a.grade)
+    );
+
     const tsunamiStatus =
       this.scenario.magnitude >= 7.0 && this.scenario.depthKm <= 40
         ? 'この地震により、大津波警報・津波警報が発表されています。ただちに命を守るため高台へ避難してください。'
         : 'この地震による津波の心配はありません。';
+
+    let lpgmSection = '';
+    if (lpgmAreas.length > 0 && maxLpgmGrade !== '階級0') {
+      lpgmSection = `\n\n【長周期地震動に関する観測情報】
+高層ビル等で大きな揺れをもたらす長周期地震動を観測しました。
+最大長周期地震動階級: ${maxLpgmGrade}
+各地の長周期地震動階級:
+${lpgmAreas.map((a) => `■ ${a.grade}: ${a.pref} (最大応答速度: 約${a.maxSva ?? 0}cm/s)`).join('\n')}`;
+    }
 
     const text = `【震源・震度に関する情報】
 ${originTime}頃、地震がありました。
 震源地: ${this.scenario.epicenterName} (北緯${this.scenario.lat}度, 東経${this.scenario.lon}度)
 震源の深さ: 約${this.scenario.depthKm}km
 地震の規模: M${this.scenario.magnitude}
-最大震度: 震度${maxIntensity}
+最大震度: 震度${maxIntensity}${lpgmSection}
 
 ${tsunamiStatus}
 
@@ -749,9 +1018,11 @@ ${areas
       depthKm: this.scenario.depthKm,
       magnitude: this.scenario.magnitude,
       maxIntensity,
+      maxLpgmGrade: maxLpgmRank > 0 ? maxLpgmGrade : undefined,
       tsunamiStatus,
       textMessage: text,
       areas,
+      lpgmAreas: lpgmAreas.length > 0 ? lpgmAreas : undefined,
     };
   }
 }

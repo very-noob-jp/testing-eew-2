@@ -261,6 +261,45 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
       null,
       2
     ),
+    p2p_552: JSON.stringify(
+      {
+        id: 'p2p_drill_552_01',
+        code: 552,
+        time: new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/'),
+        cancelled: false,
+        test: true,
+        issue: {
+          source: '気象庁',
+          time: new Date().toISOString().replace('T', ' ').substring(0, 19).replace(/-/g, '/'),
+          type: 'Focus',
+        },
+        areas: [
+          {
+            grade: 'MajorWarning',
+            name: '石川県能登',
+            immediate: true,
+            firstHeight: { condition: 'ただちに津波来襲と予測' },
+            maxHeight: { value: 5, unit: 'm', description: '巨大 (5m)' },
+          },
+          {
+            grade: 'Warning',
+            name: '山形県',
+            immediate: false,
+            firstHeight: { condition: '第1波到達中と推測' },
+            maxHeight: { value: 3, unit: 'm', description: '高い (3m)' },
+          },
+          {
+            grade: 'Watch',
+            name: '京都府',
+            immediate: false,
+            firstHeight: { condition: '第1波到達中と推測' },
+            maxHeight: { value: 1, unit: 'm', description: '1m' },
+          },
+        ],
+      },
+      null,
+      2
+    ),
   };
 
   const [customJson, setCustomJson] = useState(injectionPresets.wolfx);
@@ -303,6 +342,7 @@ export const WebSocketLab: React.FC<WebSocketLabProps> = ({
     if (filterType === 'wolfx_eew') return l.type === 'wolfx_eew' || l.type === 'jma_eew' || l.payload?.type === 'wolfx_eew' || l.payload?.type === 'jma_eew';
     if (filterType === 'p2p_eew') return l.type === 'p2p_eew' || l.payload?.code === 556;
     if (filterType === 'p2p_shindo') return l.type === 'p2p_shindo' || l.payload?.code === 551;
+    if (filterType === 'p2p_tsunami') return l.type === 'p2p_tsunami' || l.type === 'tsunami' || l.payload?.code === 552;
     return l.type === filterType;
   });
 
@@ -587,6 +627,7 @@ while (ws.State == WebSocketState.Open)
                   { id: 'wolfx_eew', label: 'Wolfx EEW' },
                   { id: 'p2p_eew', label: 'P2P EEW (556)' },
                   { id: 'p2p_shindo', label: 'P2P 震度 (551)' },
+                  { id: 'p2p_tsunami', label: 'P2P 津波 (552)' },
                   { id: 'eew', label: '標準 EEW' },
                   { id: 'dmdss_eew', label: 'DM-DSS' },
                   { id: 'shindo_flash', label: '標準震度速報' },
@@ -629,6 +670,7 @@ while (ws.State == WebSocketState.Open)
                     Boolean(log.payload?.CodeType?.includes('緊急地震速報'));
                   const isP2P556 = log.type === 'p2p_eew' || log.payload?.code === 556;
                   const isP2P551 = log.type === 'p2p_shindo' || log.payload?.code === 551;
+                  const isP2P552 = log.type === 'p2p_tsunami' || log.type === 'tsunami' || log.payload?.code === 552;
                   const isEEW = log.type === 'eew';
                   const isCancel = (isEEW && log.payload?.data?.isCancel) || (isWolfx && log.payload?.isCancel) || (isP2P556 && log.payload?.cancelled);
                   const isWarn = (isEEW && log.payload?.data?.isWarn) || (isWolfx && log.payload?.isWarn) || (isP2P556 && log.payload?.isWarning);
@@ -649,6 +691,12 @@ while (ws.State == WebSocketState.Open)
                     badgeLabel = 'P2P 震度 (551)';
                     badgeColor = 'bg-emerald-600 text-white';
                     summaryText = `[P2P 551] ${log.payload?.issue?.type}: 最大スケール ${log.payload?.earthquake?.maxScale} (${log.payload?.points?.length || 0}観測点)`;
+                  } else if (isP2P552) {
+                    const areas = log.payload?.areas || log.payload?.data?.areas || [];
+                    const hasMajor = areas.some((a: any) => a.grade === 'MajorWarning');
+                    badgeLabel = 'P2P 津波 (552)';
+                    badgeColor = hasMajor ? 'bg-purple-600 text-white animate-pulse' : 'bg-red-600 text-white';
+                    summaryText = `[P2P 552 津波予報] ${hasMajor ? '【大津波警報】' : '【津波警報/注意報】'} 対象沿岸: ${areas.map((a: any) => a.name).slice(0, 3).join('・')}${areas.length > 3 ? ` 等${areas.length}地域` : ''}`;
                   } else if (isEEW) {
                     badgeLabel = '標準 EEW';
                     badgeColor = isCancel ? 'bg-red-950 text-red-400 border border-red-800' : isWarn ? 'bg-red-600 text-white' : 'bg-amber-600 text-white';
@@ -922,6 +970,12 @@ while (ws.State == WebSocketState.Open)
                   className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800 text-emerald-300 text-[11px] hover:bg-emerald-900"
                 >
                   P2P 震度 (551)
+                </button>
+                <button
+                  onClick={() => setCustomJson(injectionPresets.p2p_552)}
+                  className="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 text-[11px] hover:bg-rose-900"
+                >
+                  P2P 津波 (552)
                 </button>
               </div>
             </div>

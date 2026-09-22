@@ -123,20 +123,22 @@ export const ShindoFlashPanel: React.FC<ShindoFlashPanelProps> = ({
 
           {/* Detailed Info Cards */}
           {currentFlash.stage === 2 && currentFlash.hypocenterName && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
               <div className="bg-slate-950/80 p-2 rounded border border-slate-800">
                 <span className="text-slate-400 text-[10px]">震源地</span>
-                <div className="font-bold text-slate-100">{currentFlash.hypocenterName}</div>
+                <div className="font-bold text-slate-100 truncate" title={currentFlash.hypocenterName}>{currentFlash.hypocenterName}</div>
               </div>
               <div className="bg-slate-950/80 p-2 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">震源の深さ</span>
-                <div className="font-mono font-bold text-slate-100">約{currentFlash.depthKm} km</div>
+                <span className="text-slate-400 text-[10px]">深さ / 規模</span>
+                <div className="font-mono font-bold text-slate-100">約{currentFlash.depthKm}km / M{currentFlash.magnitude}</div>
               </div>
               <div className="bg-slate-950/80 p-2 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">地震の規模</span>
-                <div className="font-mono font-bold text-slate-100">M{currentFlash.magnitude}</div>
+                <span className="text-slate-400 text-[10px]">長周期地震動</span>
+                <div className="font-bold text-purple-300 font-mono">
+                  {currentFlash.maxLpgmGrade ? `最大 ${currentFlash.maxLpgmGrade}` : '階級1未満'}
+                </div>
               </div>
-              <div className="bg-slate-950/80 p-2 rounded border border-slate-800">
+              <div className="bg-slate-950/80 p-2 rounded border border-slate-800 col-span-2">
                 <span className="text-slate-400 text-[10px]">津波の有無</span>
                 <div className="font-bold text-slate-200 text-[11px] truncate" title={currentFlash.tsunamiStatus}>
                   {currentFlash.tsunamiStatus}

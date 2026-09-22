@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { EEWBanner } from './components/EEWBanner';
+import { TsunamiPanel } from './components/TsunamiPanel';
 import { KyoshinMap } from './components/KyoshinMap';
 import { WaveformMonitor } from './components/WaveformMonitor';
 import { StationRankList } from './components/StationRankList';
@@ -17,11 +18,12 @@ import { CsvImportModal } from './components/CsvImportModal';
 import { PRESET_SCENARIOS } from './data/presetScenarios';
 import { KNET_STATIONS, BaseStationInfo } from './data/knetStations';
 import { EEWSimulationEngine } from './physics/eewEngine';
-import { EEWReport, Scenario, ShindoFlashReport, Station, SpecialAdvisory, WaveFront } from './types/earthquake';
+import { EEWReport, Scenario, ShindoFlashReport, Station, SpecialAdvisory, WaveFront, P2PTsunamiReport } from './types/earthquake';
 import {
   createWolfxFormat,
   createP2PEEWFormat,
   createP2PShindoFormat,
+  createP2PTsunamiFormat,
   createDmdssFormat,
 } from './utils/formatConverters';
 
@@ -66,11 +68,13 @@ export default function App() {
     return stations.find((s) => s.code === selectedStationCode) || null;
   }, [stations, selectedStationCode]);
 
-  // EEW & 震度速報
+  // EEW & 震度速報 & 津波予報
   const [currentEEW, setCurrentEEW] = useState<EEWReport | null>(null);
   const [eewHistory, setEewHistory] = useState<EEWReport[]>([]);
   const [currentShindoFlash, setCurrentShindoFlash] = useState<ShindoFlashReport | null>(null);
   const [shindoHistory, setShindoHistory] = useState<ShindoFlashReport[]>([]);
+  const [currentTsunami, setCurrentTsunami] = useState<P2PTsunamiReport | null>(null);
+  const [tsunamiHistory, setTsunamiHistory] = useState<P2PTsunamiReport[]>([]);
 
   // CSVモーダル管理
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -131,6 +135,7 @@ export default function App() {
               }
               if (msg.currentEEW) setCurrentEEW(msg.currentEEW);
               if (msg.currentShindoFlash) setCurrentShindoFlash(msg.currentShindoFlash);
+              if (msg.currentTsunami) setCurrentTsunami(msg.currentTsunami);
             } else if (msg.type === 'eew') {
               setCurrentEEW(msg.data);
               setEewHistory((prev) => {
@@ -142,6 +147,13 @@ export default function App() {
               setCurrentShindoFlash(msg.data);
               setShindoHistory((prev) => {
                 if (prev.some((p) => p.stage === msg.data.stage)) return prev;
+                return [...prev, msg.data];
+              });
+              setTotalBroadcasts((t) => t + 1);
+            } else if (msg.type === 'tsunami') {
+              setCurrentTsunami(msg.data);
+              setTsunamiHistory((prev) => {
+                if (prev.some((p) => p.id === msg.data.id)) return prev;
                 return [...prev, msg.data];
               });
               setTotalBroadcasts((t) => t + 1);
@@ -284,6 +296,25 @@ export default function App() {
           ]);
         }
 
+        if (result.newTsunami) {
+          const tsu = result.newTsunami;
+          const nowStr = new Date().toLocaleTimeString('ja-JP');
+          setCurrentTsunami(tsu);
+          setTsunamiHistory((h) => {
+            if (h.some((p) => p.id === tsu.id)) return h;
+            return [...h, tsu];
+          });
+          setTotalBroadcasts((t) => t + 1);
+
+          const p2pTsunamiMsg = createP2PTsunamiFormat(tsu);
+
+          setLogs((prev) => [
+            ...prev.slice(-80),
+            { timestamp: nowStr, type: 'tsunami', payload: { type: 'tsunami', data: tsu } },
+            { timestamp: nowStr, type: 'p2p_tsunami', payload: p2pTsunamiMsg },
+          ]);
+        }
+
         if (next >= maxDurationSec) {
           setIsRunning(false);
           return;
@@ -350,6 +381,8 @@ export default function App() {
     setEewHistory([]);
     setCurrentShindoFlash(null);
     setShindoHistory([]);
+    setCurrentTsunami(null);
+    setTsunamiHistory([]);
     clientEngineRef.current.reset(sc);
     setStations([...clientEngineRef.current.getStations()]);
   };
@@ -553,6 +586,13 @@ export default function App() {
           eewHistory={eewHistory}
           elapsedSec={elapsedSec}
           specialAdvisory={specialAdvisory}
+        />
+
+        {/* 津波予報・大津波警報パネル (P2P地震情報 Code 552) */}
+        <TsunamiPanel
+          currentTsunami={currentTsunami}
+          history={tsunamiHistory}
+          elapsedSec={elapsedSec}
         />
 
         {/* メインセクション: 地図 + サイドパネル */}
